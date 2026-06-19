@@ -1,0 +1,14 @@
+# SharpTimer — surf/bhop/KZ timer. [reference only — not installed]
+#
+# Shape D: contents are wrapped in a version-stamped dir (SharpTimer-v0.4.0/)
+# whose name changes every release, so `from` is a glob, not a literal.
+name = "SharpTimer"
+
+[source]
+type  = "github_release"
+repo  = "Letaryat/poor-sharptimer"
+asset = '^SharpTimer-.*\.zip$'
+
+[[layout]]
+from = "SharpTimer-*"           # the wrapper dir; the glob tolerates the version stamp
+to   = "."                      # it contains addons/ + cfg/, so straight into csgo/

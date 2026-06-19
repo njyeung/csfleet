@@ -1,4 +1,4 @@
-package provision
+package install
 
 import (
 	"archive/tar"
@@ -20,8 +20,8 @@ func safeJoin(dest, name string) (string, error) {
 	return target, nil
 }
 
-// extractZip unpacks a .zip into dest, preserving entry permissions.
-func extractZip(archive, dest string) error {
+// ExtractZip unpacks a .zip into dest, preserving entry permissions.
+func ExtractZip(archive, dest string) error {
 	zr, err := zip.OpenReader(archive)
 	if err != nil {
 		return err
@@ -54,9 +54,9 @@ func extractZip(archive, dest string) error {
 	return nil
 }
 
-// extractTarGz unpacks a .tar.gz into dest, preserving entry permissions and
+// ExtractTarGz unpacks a .tar.gz into dest, preserving entry permissions and
 // symlinks (MetaMod's tarball ships its binaries as a symlinked tree).
-func extractTarGz(archive, dest string) error {
+func ExtractTarGz(archive, dest string) error {
 	f, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -116,10 +116,10 @@ func writeFile(target string, r io.Reader, mode os.FileMode) error {
 	return out.Close()
 }
 
-// copyTree recursively copies src into dest (merging into an existing dest),
-// preserving permissions. Used for WeaponPaints' bare-zip layout, which doesn't
-// map cleanly onto an addons/ overlay.
-func copyTree(src, dest string) error {
+// CopyTree recursively copies src into dest (merging into an existing dest),
+// preserving permissions. Used for layouts whose archive doesn't map cleanly
+// onto an addons/ overlay.
+func CopyTree(src, dest string) error {
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -132,6 +132,58 @@ func copyTree(src, dest string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		return copyFile(path, target)
+		return CopyFile(path, target)
 	})
+}
+
+// CopyFile copies src to dest, preserving the source's permission bits.
+func CopyFile(src, dest string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// AtomicWrite writes data to a temp file in the destination's directory and
+// renames it into place, so a crash mid-write never leaves a half-written file.
+func AtomicWrite(dest string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }

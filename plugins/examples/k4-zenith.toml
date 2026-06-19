@@ -1,0 +1,15 @@
+# K4-Zenith — modular stats/ranks/bans suite. [reference only — not installed]
+#
+# Shape C: everything sits under a `Zenith/` wrapper (8 plugins + 2 shared
+# modules). The macOS-built zip also carries a __MACOSX/ junk tree.
+name   = "K4-Zenith"
+ignore = ["__MACOSX/**"]
+
+[source]
+type  = "github_release"
+repo  = "K4ryuu/K4-Zenith"
+asset = '^Zenith\.zip$'
+
+[[layout]]
+from = "Zenith"                 # rename the wrapper onto the CSS dir
+to   = "addons/counterstrikesharp"

@@ -3,35 +3,27 @@ package provision
 import (
 	"encoding/json"
 	"os"
+
+	"csfleet/orchestrator/internal/install"
 )
 
 // receipt records what we actually installed into base/ so
 // on next startup we know the state of the files
 type receipt struct {
-	Game      gameReceipt   `json:"game"`
-	ModBundle modBundle     `json:"modBundle"`
-	Plugin    pluginReceipt `json:"plugin"`
-	Skins     skinsReceipt  `json:"skins"`
+	Game      gameReceipt `json:"game"`
+	ModBundle modBundle   `json:"modBundle"`
 }
 
 type gameReceipt struct {
 	BuildID string `json:"buildid"` // appmanifest_730.acf StateFlags-4 buildid
 }
 
+// modBundle is the shared base mod layer: only MetaMod + CounterStrikeSharp.
+// Actual plugins (WeaponPaints, InspectGive, ...) are inserted per-instance into
+// each server's overlay, not baked into base — see ApplyManifest.
 type modBundle struct {
-	MetaMod      string            `json:"metamod"`      // mmsource-latest-linux filename
-	CSS          string            `json:"css"`          // GitHub release tag
-	WeaponPaints string            `json:"weaponpaints"` // GitHub release tag
-	Deps         map[string]string `json:"deps"`         // dep name -> GitHub release tag
-}
-
-type pluginReceipt struct {
-	SourceHash      string `json:"sourceHash"`      // hash of InspectGive/ source tree
-	BuiltAgainstCSS string `json:"builtAgainstCss"` // CSS tag the plugin was built against
-}
-
-type skinsReceipt struct {
-	Commit string `json:"commit"` // CSGO-API skins.json commit SHA
+	MetaMod string `json:"metamod"` // mmsource-latest-linux filename
+	CSS     string `json:"css"`     // GitHub release tag
 }
 
 // loadReceipt reads the receipt; a missing or corrupt file yields the zero
@@ -51,5 +43,5 @@ func saveReceipt(path string, r receipt) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, out)
+	return install.AtomicWrite(path, out)
 }

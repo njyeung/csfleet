@@ -1,0 +1,42 @@
+# CS2-SimpleAdmin — admin/moderation suite. [reference only — not installed]
+#
+# Shape B: archive root is `counterstrikesharp/` (no addons/ prefix). Ships three
+# plugins (CS2-SimpleAdmin, _FunCommands, _StealthModule) plus a shared API
+# (CS2-SimpleAdminApi) in one archive.
+name = "CS2-SimpleAdmin"
+
+[source]
+type  = "github_release"
+repo  = "daffyyyy/CS2-SimpleAdmin"
+asset = '^CS2-SimpleAdmin-.*\.zip$'
+
+[[layout]]
+from = "counterstrikesharp"
+to   = "addons/counterstrikesharp"
+
+
+# Unlike WeaponPaints/InspectGive — whose configs are small and we own outright —
+# CS2-SimpleAdmin's config is large and auto-generated (Discord webhooks, ban
+# types, menus...). So the template is NOT the whole file; it's a partial *seed*
+# carrying only the DatabaseConfig block. CounterStrikeSharp's loader
+# (ConfigManager.Load) deserializes whatever file is present and leaves every key
+# we omit at the plugin's own compiled-in default, and it never writes the file
+# back when one already exists. So we replace just the DB block; upstream keeps
+# owning everything else, and a plugin upgrade picks up new defaults for free
+# (a whole-file template would freeze them at the version we copied).
+[[template]]
+template = "cs2-simpleadmin.json.tmpl"
+path     = "addons/counterstrikesharp/configs/plugins/CS2-SimpleAdmin/CS2-SimpleAdmin.json"
+body = '''
+{
+  "DatabaseConfig": {
+    "DatabaseType": "MySQL",
+    "DatabaseHost": "${db.host}",
+    "DatabasePort": ${db.port},
+    "DatabaseName": "${db.name}",
+    "DatabaseUser": "${db.user}",
+    "DatabasePassword": "${db.pass}",
+    "DatabaseSSlMode": "preferred"
+  }
+}
+'''

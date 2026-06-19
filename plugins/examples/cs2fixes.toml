@@ -1,0 +1,14 @@
+# CS2Fixes — Metamod-native fixes/admin (NOT a CounterStrikeSharp plugin).
+# [reference only — not installed]
+#
+# Shape A, but it lands outside counterstrikesharp/: addons/cs2fixes +
+# addons/metamod (its .vdf) plus game content (cfg/, materials/, particles/,
+# soundevents/, sounds/). Ships as a .tar.gz, autodetected from the asset name.
+name = "CS2Fixes"
+
+[source]
+type  = "github_release"
+repo  = "Source2ZE/CS2Fixes"
+asset = 'linux\.tar\.gz$'
+
+# Default layout: the archive is fully game-relative, extract into csgo/.

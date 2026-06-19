@@ -1,0 +1,7 @@
+base/
+run/
+orchestration/
+plugins/
+scripts/
+.git/
+.env

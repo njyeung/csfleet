@@ -1,0 +1,8 @@
+# MenuManager — in-game menu framework used by WeaponPaints.
+# Shape A: ships addons/counterstrikesharp/{plugins,shared}/.
+name = "MenuManager"
+
+[source]
+type  = "github_release"
+repo  = "NickFox007/MenuManagerCS2"
+asset = '^MenuManager\.zip$'

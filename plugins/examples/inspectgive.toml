@@ -1,0 +1,32 @@
+# InspectGive — our plugin: paste a CS2 inspect link in chat to equip that skin.
+# It writes the skin rows WeaponPaints reads, so it depends on WeaponPaints
+# for the schema.
+
+name     = "InspectGive"
+requires = ["WeaponPaints"]    # shares WeaponPaints' DB schema
+
+[source]
+type  = "github_release"
+repo  = "njyeung/InspectGive"
+asset = '^InspectGive\.zip$'
+
+[[layout]]
+from = "InspectGive"
+to   = "addons/counterstrikesharp/plugins/InspectGive"
+
+
+[[template]]
+path     = "addons/counterstrikesharp/configs/plugins/InspectGive/InspectGive.json"
+body= '''
+{
+  "DatabaseHost": "${db.host}",
+  "DatabasePort": ${db.port},
+  "DatabaseName": "${db.name}",
+  "DatabaseUser": "${db.user}",
+  "DatabasePassword": "${db.pass}",
+  "ApplyToBothTeams": true,
+  "ChatTriggerPrefix": "csgo_econ_action_preview",
+  "Command": "inspect",
+  "ConfigVersion": 1
+}
+'''

@@ -1,0 +1,11 @@
+# MatchZy — competitive match plugin. [reference only — not installed]
+#
+# Shape A, and it also ships cfg/MatchZy/ at the archive root (rides along into
+# csgo/cfg/). Pick the plugin-only asset (MatchZy-X.Y.Z.zip); the
+# `-with-cssharp-*` bundles re-ship CounterStrikeSharp + Metamod, which we own.
+name = "MatchZy"
+
+[source]
+type  = "github_release"
+repo  = "shobhit-pathak/MatchZy"
+asset = '^MatchZy-[0-9.]+\.zip$'   # plugin-only; excludes the -with-cssharp-* bundles

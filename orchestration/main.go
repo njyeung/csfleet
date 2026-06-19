@@ -1,17 +1,26 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
+
+	"csfleet/orchestrator/database"
 	"csfleet/orchestrator/provision"
 )
 
-// repoRoot resolves the repo root. CSFLEET_ROOT overrides it (e.g. when the
-// binary runs containerized where the source path no longer exists); otherwise
-// it derives from this source file's location.
+const (
+	mariaImage  = "mariadb:11"   // db img name
+	mariaDBName = "cs2-mariadb"  // db docker container name
+)
+
 func repoRoot() string {
 	if env := os.Getenv("CSFLEET_ROOT"); env != "" {
 		return env
@@ -20,16 +29,52 @@ func repoRoot() string {
 	if !ok {
 		log.Fatal("cannot resolve source location (set CSFLEET_ROOT)")
 	}
-	// file = <root>/orchestration/main.go -> Dir twice == <root>
 	return filepath.Dir(filepath.Dir(file))
 }
 
-// CSFleet orchestrator. Every startup begins by provisioning the shared base
-// install (game + mods + plugin) to upstream-latest; the long-running daemon
-// (port pool, overlays, container lifecycle) follows.
 func main() {
-	if err := provision.Run(repoRoot()); err != nil {
+	root := repoRoot()
+	cfg := configFromEnv()
+	ctx := context.Background()
+
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		log.Fatalf("[orchestrator] docker client: %v", err)
+	}
+	defer cli.Close()
+
+	ensureNetwork(ctx, cli)
+
+	store, err := database.Start(ctx, cli, database.Config{
+		Image:     mariaImage,
+		Container: mariaDBName,
+		Network:   networkName,
+		Host:      cfg.DBHost,
+		Name:      cfg.DBName,
+		User:      cfg.DBUser,
+		Pass:      cfg.DBPass,
+		RootPass:  cfg.DBRootPass,
+		Port:      cfg.DBPort,
+	})
+	if err != nil {
+		log.Fatalf("[orchestrator] database: %v", err)
+	}
+	defer store.Close(context.Background())
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sig
+		log.Println("[orchestrator] shutting down")
+		store.Close(context.Background())
+		os.Exit(0)
+	}()
+
+	if err := provision.Run(ctx, root, cli); err != nil {
 		log.Fatalf("[orchestrator] provision: %v", err)
 	}
-	// TODO: daemon runtime (spawn + reconcile the configured servers).
+}
+
+func ensureNetwork(ctx context.Context, cli *client.Client) {
+	cli.NetworkCreate(ctx, networkName, network.CreateOptions{})
 }
