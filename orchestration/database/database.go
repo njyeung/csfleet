@@ -14,14 +14,12 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	_ "github.com/go-sql-driver/mysql"
 )
 
 type Config struct {
 	Image     string // MariaDB Docker image
 	Container string // container name
-	Network   string // Docker network to attach to
 	Host      string // host the orchestrator dials (localhost when running in userland)
 	Name      string // database name
 	User      string
@@ -54,7 +52,6 @@ func Start(ctx context.Context, cli *client.Client, cfg Config) (*Store, error) 
 		}
 
 		log.Printf("[database] starting %s", cfg.Container)
-		portStr := strconv.Itoa(cfg.Port)
 		resp, err := cli.ContainerCreate(ctx, &container.Config{
 			Image: cfg.Image,
 			Env: []string{
@@ -63,16 +60,8 @@ func Start(ctx context.Context, cli *client.Client, cfg Config) (*Store, error) 
 				"MARIADB_PASSWORD=" + cfg.Pass,
 				"MARIADB_ROOT_PASSWORD=" + cfg.RootPass,
 			},
-			ExposedPorts: nat.PortSet{
-				nat.Port(portStr + "/tcp"): struct{}{},
-			},
 		}, &container.HostConfig{
-			NetworkMode: container.NetworkMode(cfg.Network),
-			PortBindings: nat.PortMap{
-				nat.Port(portStr + "/tcp"): []nat.PortBinding{
-					{HostIP: "127.0.0.1", HostPort: portStr},
-				},
-			},
+			NetworkMode: "host",
 		}, nil, nil, cfg.Container)
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", cfg.Container, err)
@@ -201,7 +190,6 @@ func (s *Store) migrate() error {
 		CREATE TABLE IF NOT EXISTS config_files (
 			name       VARCHAR(255) NOT NULL PRIMARY KEY,
 			content    MEDIUMTEXT   NOT NULL,
-			path       VARCHAR(512) NOT NULL,
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
@@ -263,8 +251,6 @@ func (s *Store) seedDefaults() error {
 		{"db.name", s.cfg.Name},
 		{"db.user", s.cfg.User},
 		{"db.pass", s.cfg.Pass},
-		{"port_pool.start", "27015"},
-		{"port_pool.end", "27045"},
 	}
 	for _, d := range defaults {
 		_, err := s.DB.Exec(
@@ -287,10 +273,11 @@ func (s *Store) LoadManifest(name string) (string, error) {
 	return manifest, nil
 }
 
-func (s *Store) LoadConfigFile(name string) (content, path string, err error) {
-	err = s.DB.QueryRow("SELECT content, path FROM config_files WHERE name = ?", name).Scan(&content, &path)
+func (s *Store) LoadConfigFile(name string) (string, error) {
+	var content string
+	err := s.DB.QueryRow("SELECT content FROM config_files WHERE name = ?", name).Scan(&content)
 	if err != nil {
-		return "", "", fmt.Errorf("load config %q: %w", name, err)
+		return "", fmt.Errorf("load config %q: %w", name, err)
 	}
-	return content, path, nil
+	return content, nil
 }

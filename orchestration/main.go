@@ -9,11 +9,12 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
 	"csfleet/orchestrator/database"
+	"csfleet/orchestrator/plugin"
 	"csfleet/orchestrator/provision"
+	"csfleet/orchestrator/server"
 )
 
 const (
@@ -43,12 +44,9 @@ func main() {
 	}
 	defer cli.Close()
 
-	ensureNetwork(ctx, cli)
-
 	store, err := database.Start(ctx, cli, database.Config{
 		Image:     mariaImage,
 		Container: mariaDBName,
-		Network:   networkName,
 		Host:      cfg.DBHost,
 		Name:      cfg.DBName,
 		User:      cfg.DBUser,
@@ -61,20 +59,28 @@ func main() {
 	}
 	defer store.Close(context.Background())
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		log.Println("[orchestrator] shutting down")
-		store.Close(context.Background())
-		os.Exit(0)
-	}()
-
 	if err := provision.Run(ctx, root, cli); err != nil {
 		log.Fatalf("[orchestrator] provision: %v", err)
 	}
+
+	inst, err := server.Start(ctx, cli, root, server.Definition{
+		Name:           "test",
+		Map:            "de_dust2",
+		Port:           27015,
+		GOTVPortOffset: 5,
+		LAN:            true,
+		GameMode:       1,
+		MaxPlayers:     10,
+	}, nil, nil, plugin.Datasource{}, store.LoadManifest)
+	if err != nil {
+		log.Fatalf("[orchestrator] server: %v", err)
+	}
+	defer inst.Stop(context.Background(), cli)
+
+	log.Println("[orchestrator] ready — waiting for signal")
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+	log.Println("[orchestrator] shutting down")
 }
 
-func ensureNetwork(ctx context.Context, cli *client.Client) {
-	cli.NetworkCreate(ctx, networkName, network.CreateOptions{})
-}

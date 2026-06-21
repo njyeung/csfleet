@@ -5,10 +5,6 @@ import (
 	"strconv"
 )
 
-// Bootstrap values the orchestrator needs before it can reach the database
-// Everything else is stored in the DB tables and is seeded from these on first run
-const networkName = "csfleet"
-
 type Config struct {
 	DBHost     string
 	DBPort     int

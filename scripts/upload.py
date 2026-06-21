@@ -3,34 +3,33 @@
 
 Usage:
     ./upload.py plugin  <file.toml>  [--name NAME]
-    ./upload.py config  <file.cfg>   --path <game-relative path>  [--name NAME]
+    ./upload.py config  <file.cfg>   [--name NAME]
 
-The --name defaults to the filename without extension.
+Plugin --name defaults to the filename without extension.
+Config --name is the game-relative path (e.g. cfg/server.cfg); defaults to
+cfg/<filename>.
+
 Upserts: if a row with that name exists, it's replaced.
-
-Connection defaults match the dev docker-compose; override with env vars:
-    DB_HOST  (default: 127.0.0.1)
-    DB_PORT  (default: 3306)
-    DB_USER  (default: weaponpaints)
-    DB_PASS  (default: dbpass)
 """
 
 import argparse
 import os
 import sys
 
+from dotenv import load_dotenv
 import pymysql
-
-DB = "csfleet"
 
 
 def connect():
+    env_path = os.path.join(os.path.dirname(__file__), os.pardir, ".env")
+    load_dotenv(env_path)
+
     return pymysql.connect(
         host=os.environ.get("DB_HOST", "127.0.0.1"),
         port=int(os.environ.get("DB_PORT", "3306")),
-        user=os.environ.get("DB_USER", "weaponpaints"),
-        password=os.environ.get("DB_PASS", "dbpass"),
-        database=DB,
+        user=os.environ.get("DB_USER", "csfleet"),
+        password=os.environ.get("DB_PASS", "csfleet"),
+        database=os.environ.get("DB_NAME", "csfleet"),
         autocommit=True,
     )
 
@@ -45,14 +44,14 @@ def upload_plugin(conn, name, content):
     print(f"plugin  {name!r}  ok")
 
 
-def upload_config(conn, name, content, path):
+def upload_config(conn, name, content):
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO config_files (name, content, path) VALUES (%s, %s, %s) "
-            "ON DUPLICATE KEY UPDATE content = VALUES(content), path = VALUES(path)",
-            (name, content, path),
+            "INSERT INTO config_files (name, content) VALUES (%s, %s) "
+            "ON DUPLICATE KEY UPDATE content = VALUES(content)",
+            (name, content),
         )
-    print(f"config  {name!r}  -> {path}  ok")
+    print(f"config  {name!r}  ok")
 
 
 def main():
@@ -65,18 +64,18 @@ def main():
 
     cp = sub.add_parser("config", help="upload a config file (.cfg)")
     cp.add_argument("file", help="path to the config file")
-    cp.add_argument("--path", required=True, help="game-relative install path (e.g. cfg/server.cfg)")
-    cp.add_argument("--name", help="override the config name (default: filename stem)")
+    cp.add_argument("--name", help="game-relative path used as name (default: cfg/<filename>)")
 
     args = p.parse_args()
-    name = args.name or os.path.splitext(os.path.basename(args.file))[0]
     content = open(args.file).read()
     conn = connect()
 
     if args.kind == "plugin":
+        name = args.name or os.path.splitext(os.path.basename(args.file))[0]
         upload_plugin(conn, name, content)
     else:
-        upload_config(conn, name, content, args.path)
+        name = args.name or "cfg/" + os.path.basename(args.file)
+        upload_config(conn, name, content)
 
 
 if __name__ == "__main__":
