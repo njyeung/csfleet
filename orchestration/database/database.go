@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -20,7 +21,9 @@ import (
 type Config struct {
 	Image     string // MariaDB Docker image
 	Container string // container name
-	Host      string // host the orchestrator dials (localhost when running in userland)
+	Network   string // user-defined bridge the container attaches to
+	IP        string // static address on that bridge
+	Host      string // host the orchestrator dials (maria's bridge IP)
 	Name      string // database name
 	User      string
 	Pass      string
@@ -61,8 +64,12 @@ func Start(ctx context.Context, cli *client.Client, cfg Config) (*Store, error) 
 				"MARIADB_ROOT_PASSWORD=" + cfg.RootPass,
 			},
 		}, &container.HostConfig{
-			NetworkMode: "host",
-		}, nil, nil, cfg.Container)
+			NetworkMode: container.NetworkMode(cfg.Network),
+		}, &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				cfg.Network: {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: cfg.IP}},
+			},
+		}, nil, cfg.Container)
 		if err != nil {
 			return nil, fmt.Errorf("create %s: %w", cfg.Container, err)
 		}
@@ -198,24 +205,36 @@ func (s *Store) migrate() error {
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS clusters (
+			name       VARCHAR(255) NOT NULL PRIMARY KEY,
+			port       INT          NOT NULL UNIQUE,
+			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+		);
+
+		-- ip: static bridge address, the proxy's DNAT target. port: external host
+		-- port clients reach this server on when standalone, NULL when it's a cluster
+		-- backend (reached via clusters.port). Internal game/GOTV ports are constants.
 		CREATE TABLE IF NOT EXISTS servers (
 			name              VARCHAR(255) NOT NULL PRIMARY KEY,
-			map_name          VARCHAR(255) NOT NULL DEFAULT 'de_dust2',
-			port              INT,
+			map_name          VARCHAR(255) NOT NULL,
+			ip                VARCHAR(45)  NOT NULL UNIQUE,
+			port              INT          UNIQUE,
+			cluster           VARCHAR(255) DEFAULT NULL,
 			gslt_token        VARCHAR(255),
-			rcon_password     VARCHAR(255) NOT NULL DEFAULT '',
-			server_password   VARCHAR(255) NOT NULL DEFAULT '',
-			lan               BOOLEAN      NOT NULL DEFAULT TRUE,
-			game_type         INT          NOT NULL DEFAULT 0,
-			game_mode         INT          NOT NULL DEFAULT 1,
-			max_players       INT          NOT NULL DEFAULT 10,
-			bot_quota         INT          NOT NULL DEFAULT 0,
-			gotv_port_offset  INT          NOT NULL DEFAULT 5,
+			rcon_password     VARCHAR(255),
+			server_password   VARCHAR(255),
+			lan               BOOLEAN      NOT NULL,
+			game_type         INT,
+			game_mode         INT,
+			max_players       INT,
+			bot_quota         INT,
 			restart_after_hrs FLOAT,
 			stop_after_hrs    FLOAT,
 			desired_state     ENUM('running','stopped','disabled') NOT NULL DEFAULT 'running',
 			updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-			FOREIGN KEY (gslt_token) REFERENCES gslt_tokens(token)
+			CONSTRAINT server_reachable CHECK ((cluster IS NULL) <> (port IS NULL)),
+			FOREIGN KEY (gslt_token) REFERENCES gslt_tokens(token),
+			FOREIGN KEY (cluster) REFERENCES clusters(name)
 		);
 
 		CREATE TABLE IF NOT EXISTS env_variables (
@@ -241,7 +260,36 @@ func (s *Store) migrate() error {
 			FOREIGN KEY (config) REFERENCES config_files(name)
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.ensurePortTriggers()
+}
+
+// ensurePortTriggers keeps the external host ports in servers.port and
+// clusters.port from colliding — they share the host's port space. UNIQUE
+// already guards each column on its own; these cover the cross-table case.
+func (s *Store) ensurePortTriggers() error {
+	add := func(name, event, other, msg string) string {
+		return fmt.Sprintf(`CREATE OR REPLACE TRIGGER %s %s FOR EACH ROW
+			BEGIN
+				IF EXISTS (SELECT 1 FROM %s WHERE port = NEW.port) THEN
+					SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '%s';
+				END IF;
+			END`, name, event, other, msg)
+	}
+	triggers := []string{
+		add("servers_port_insert", "BEFORE INSERT ON servers", "clusters", "server port collides with a cluster port"),
+		add("servers_port_update", "BEFORE UPDATE ON servers", "clusters", "server port collides with a cluster port"),
+		add("clusters_port_insert", "BEFORE INSERT ON clusters", "servers", "cluster port collides with a server port"),
+		add("clusters_port_update", "BEFORE UPDATE ON clusters", "servers", "cluster port collides with a server port"),
+	}
+	for _, t := range triggers {
+		if _, err := s.DB.Exec(t); err != nil {
+			return fmt.Errorf("port trigger: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) seedDefaults() error {
@@ -262,6 +310,30 @@ func (s *Store) seedDefaults() error {
 		}
 	}
 	return nil
+}
+
+// LoadEnv returns the env_variables visible to a server: the globals
+// (server = '') overlaid with that server's own rows. Pass "" for just the
+// globals. The db.* keys seeded by seedDefaults feed the plugin Datasource.
+func (s *Store) LoadEnv(server string) (map[string]string, error) {
+	rows, err := s.DB.Query(
+		"SELECT `key`, value FROM env_variables WHERE server = '' OR server = ? ORDER BY server",
+		server,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load env: %w", err)
+	}
+	defer rows.Close()
+
+	env := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("load env: %w", err)
+		}
+		env[k] = v // specific server rows sort after '' and overwrite globals
+	}
+	return env, rows.Err()
 }
 
 func (s *Store) LoadManifest(name string) (string, error) {

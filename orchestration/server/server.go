@@ -8,19 +8,27 @@ import (
 	"strconv"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
 	"csfleet/orchestrator/plugin"
 	"csfleet/orchestrator/serverconfig"
 )
 
-const cs2Image = "joedwards32/cs2:latest"
+const (
+	cs2Image = "joedwards32/cs2:latest"
+
+	// Every container has its own bridge IP, so the internal ports are constant.
+	// External reachability is handled by the proxy, not by these.
+	cs2GamePort = 27015
+	cs2GOTVPort = 27020
+)
 
 type Definition struct {
 	Name           string
 	Map            string
-	Port           int
-	GOTVPortOffset int
+	Network        string // bridge to attach to
+	IP             string // static address on that bridge (the proxy's DNAT target)
 	GSLTToken      string
 	RconPassword   string
 	ServerPassword string
@@ -40,7 +48,7 @@ type ConfigPayload struct {
 type Instance struct {
 	Name        string
 	ContainerID string
-	Port        int
+	IP          string
 	overlay     overlayDirs
 }
 
@@ -86,11 +94,11 @@ func Start(ctx context.Context, cli *client.Client, root string, def Definition,
 		return nil, fmt.Errorf("container: %w", err)
 	}
 
-	log.Printf("[server/%s] started (container %s, port %d)", def.Name, id[:12], def.Port)
+	log.Printf("[server/%s] started (container %s, ip %s)", def.Name, id[:12], def.IP)
 	return &Instance{
 		Name:        def.Name,
 		ContainerID: id,
-		Port:        def.Port,
+		IP:          def.IP,
 		overlay:     ov,
 	}, nil
 }
@@ -106,8 +114,8 @@ func (inst *Instance) Stop(ctx context.Context, cli *client.Client) error {
 }
 
 func createContainer(ctx context.Context, cli *client.Client, def Definition, merged string) (string, error) {
-	port := strconv.Itoa(def.Port)
-	gotvPort := strconv.Itoa(def.Port + def.GOTVPortOffset)
+	port := strconv.Itoa(cs2GamePort)
+	gotvPort := strconv.Itoa(cs2GOTVPort)
 	name := containerName(def.Name)
 
 	env := []string{
@@ -138,11 +146,15 @@ func createContainer(ctx context.Context, cli *client.Client, def Definition, me
 		Image: cs2Image,
 		Env:   env,
 	}, &container.HostConfig{
-		NetworkMode: "host",
+		NetworkMode: container.NetworkMode(def.Network),
 		// docker's default seccomp profile blocks an i386 syscall that the 32 bit steamcmd needs...
 		SecurityOpt: []string{"seccomp=unconfined"},
 		Binds:       []string{merged + ":/home/steam/cs2-dedicated"},
-	}, nil, nil, name)
+	}, &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			def.Network: {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: def.IP}},
+		},
+	}, nil, name)
 	if err != nil {
 		return "", fmt.Errorf("create %s: %w", name, err)
 	}

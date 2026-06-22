@@ -17,7 +17,7 @@ type Config struct {
 func configFromEnv() Config {
 	port, _ := strconv.Atoi(envOr("DB_PORT", "3306"))
 	return Config{
-		DBHost:     envOr("DB_HOST", "127.0.0.1"),
+		DBHost:     envOr("DB_HOST", mariaIP),
 		DBPort:     port,
 		DBName:     envOr("DB_NAME", "csfleet"),
 		DBUser:     envOr("DB_USER", "csfleet"),
