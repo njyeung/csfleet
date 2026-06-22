@@ -17,10 +17,12 @@ System requirements:
 - 2 CPUs
 - 2 GiB RAM
 
-Credit due to:
+Credit due to the following projects which CSFleet heavily relies on:
 
 joedwards32 for providing the CS2 dedicated server image
+
 CM2Walki for the SteamCMD image
 
+Counter Strike Sharp
 
 
