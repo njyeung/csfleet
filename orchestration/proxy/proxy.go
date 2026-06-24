@@ -1,13 +1,4 @@
-// Package proxy is the UDP reverse proxy for the fleet. It owns the kernel-side
-// plumbing — an nftables NFQUEUE rule, the DOCKER-USER accept rule, conntrack —
-// and an in-memory routing table that DNATs client traffic on managed external
-// ports to backend containers on the csfleet bridge.
-//
-// It is deliberately dumb. It knows nothing about the database, containers, or
-// desired state; the manager (orchestration/fleet) composes it with `server`
-// and `database` and drives it through Start/Stop and the AddBackend /
-// RemoveBackend / Unmanage / FlushConntrack mechanisms. Because state is rebuilt
-// from scratch on every startup, there is nothing to reconcile after a crash.
+// Package proxy is the UDP reverse proxy for the fleet.
 package proxy
 
 import (
@@ -16,6 +7,8 @@ import (
 	"log"
 	"net/netip"
 	"time"
+
+	"sync"
 
 	nfqueue "github.com/florianl/go-nfqueue"
 	"github.com/google/nftables"
@@ -46,6 +39,10 @@ type Config struct {
 type Proxy struct {
 	cfg Config
 	r   *router
+
+	// opMu serializes the backend-mutation entrypoints (AddBackend, RemoveBackend,
+	// FlushConntrack) so they can be called concurrently.
+	opMu sync.Mutex
 
 	// nft handles retained from installTable so AddBackend/RemoveBackend can add
 	// and delete @pool map elements (mark -> backend) without rebuilding anything.
@@ -158,6 +155,9 @@ func (p *Proxy) teardownKernel() {
 //
 // IMPORTANT: The manager MUST perform these in order: Flush Conntrack -> Start Server -> Add Backend
 func (p *Proxy) AddBackend(port uint16, ip string) error {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
+
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return fmt.Errorf("add backend: bad ip %q: %w", ip, err)
@@ -187,6 +187,9 @@ func (p *Proxy) AddBackend(port uint16, ip string) error {
 // Stopping the server is the least time-sensitive, it can technically happen anywhere, but the
 // cleanest order is right after Flush Conntrack
 func (p *Proxy) RemoveBackend(port uint16, ip string) error {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
+
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return fmt.Errorf("remove backend: bad ip %q: %w", ip, err)

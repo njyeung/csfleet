@@ -43,9 +43,9 @@ func (p *Proxy) onPacket(a nfqueue.Attribute) int {
 }
 
 // onError handles NFQUEUE receive errors. ENOBUFS means the kernel dropped
-// queued packets because userspace fell behind — recoverable, so we stay quiet
-// and keep reading. Returning 0 keeps the receiver alive; on shutdown the
-// cancelled context breaks the loop regardless.
+// queued packets because userspace fell behind
+//
+// Returning 0 keeps the receiver alive.
 func (p *Proxy) onError(err error) int {
 	if !errors.Is(err, unix.ENOBUFS) {
 		log.Printf("[proxy] nfqueue receive: %v", err)

@@ -1,13 +1,10 @@
 # Plugin manifests
 
-Each `*.toml` here is an example **recipe** for one CounterStrikeSharp / Metamod plugin:
-where to fetch it, how to lay its files into the shared `base/` install, what it
-depends on, and how to template its config (including database).
+Each `*.toml` here is an example **recipe** for one CounterStrikeSharp / Metamod plugin: Where to fetch it, how to lay its files into the shared `base/` install, what it depends on, and how to template its config (including database).
 
-Manifests are portable and written to the database via the GUI: a manifest never contains secrets. Credentials are resolved by the orchestrator at runtime based on the env variables the user inserts to the database.
+Manifests are portable and written to the database via the GUI. Credentials are resolved by the orchestrator at runtime based on the env variables the user inserts to the database. The same environment variables are propogated into the container as well.
 
-The orchestrator reads the enabled plugins, resolves the
-dependency closure, fetches + lays everything into `base/game/csgo/`, and
+The orchestrator reads the enabled plugins, resolves the dependency closure, fetches + lays everything into `base/game/csgo/`, and
 rebuilds the whole `addons/` tree atomically when any version drifts.
 
 ## Schema
@@ -26,11 +23,9 @@ rebuilds the whole `addons/` tree atomically when any version drifts.
 - `type` — one of:
   - `github_release` — latest (or pinned) GitHub release asset.
   - `url` — a direct download URL.
-  - `allied_latest` — AlliedModders "latest" pointer file + base URL (MetaMod).
+  - `local` — absolute file path on the machine.
 - `repo` — `"owner/name"` (for `github_release`).
-- `asset` — regex selecting the asset by name (for `github_release`). Pick the
-  *plugin-only* asset; avoid `with-cssharp` / `with-runtime` bundles that
-  re-ship CounterStrikeSharp — we own that layer.
+- `asset` — regex selecting the asset by name (for `github_release`).
 - `url` — direct URL (for `url`).
 - `version` — `"latest"` (default) or a pinned release tag (for `github_release`).
 - Archive format (`.zip` / `.tar.gz`) is autodetected from the asset name.
@@ -45,35 +40,28 @@ archive straight into `csgo/`. That covers every plugin whose archive is already
 game-relative (`addons/...` at the root).
 
 ### `[[template]]` — config files rendered at boot
-- `template` — template file in this directory (e.g. `weaponpaints.json.tmpl`).
+- `body` — multiline body where `${}` indicates a variable to be replaced by an env variable. 
 - `path` — where the rendered file is written, relative to `game/csgo/`.
 
-The orchestrator renders the template in the overlay fs, substituting
-`${db.host}`, `${db.port}`, `${db.name}`, `${db.user}`, `${db.pass}` from the
-the database credentials. Rendering stays on the overlay so secrets never touch the read-only `base/`.
+The following env variables are automatically injected from .env
+- `${db.host}` from DB_HOST
+- `${db.port}` from DB_PORT
+- `${db.name}` from DB_NAME
+- `${db.user}` from DB_USER
+- `${db.pass}` from DB_PASS
+- `$(db.rootpass)` from DB_ROOT_PASS
 
-This is **whole-file** templating: the `.tmpl` *is* the entire config, written
-before launch so the plugin finds it already present. That works because we write
-it pre-launch and is fine when the config is small enough to own (WeaponPaints,
-InspectGive). For a large auto-generated config (e.g. CS2-SimpleAdmin, dozens of
-unrelated settings), a whole-file template freezes all those other settings at the
-version you copied. The eventual answer for those is a **patch** mode — declare
-just the keys to set (e.g. `set = { "DatabaseConfig.DatabaseType" = "MySQL", ... }`)
-and merge them into the plugin's own config — but mind the bootstrap order: the
-plugin writes its config on first load, *after* launch, while the hook runs
-*before* it, so there's nothing to patch on a clean boot. Whole-file is the
-default for that reason.
+Other env variables can be added via the GUI.
 
-## The shapes (taken from real plugins)
+This is whole-file templating. Some large auto-generated configs probably require a patch mode which we will add in the future. 
 
-| shape | example | layout |
-|---|---|---|
-| A. game-relative (`addons/...` at root) | MenuManager, AnyBaseLib, cs2-retakes, CS2Fixes | default (none) |
-| B. css-relative (`counterstrikesharp/...`) | CS2-SimpleAdmin | `from = "counterstrikesharp"` |
-| C. named wrapper (`Zenith/...`) | K4-Zenith | `from = "Zenith"` |
-| D. version-stamped wrapper | SharpTimer | `from = "SharpTimer-*"` (glob) |
-| E. scattered (plugin dir + sibling dirs) | WeaponPaints | one rule per piece |
+## Examples
 
-The manifests in this directory are the **live set** the orchestrator installs.
-`examples/` holds hand-written manifests for plugins we don't install, kept as a
-reference for each shape (asset regexes there may need tuning).
+Working plugin examples are given in this directory.
+- CS-SimpleAdmin
+- MenuManager
+- AnyBaseLib
+- cs2-retakes
+- CS2Fixes
+- SharpTimer
+- WeaponPaints

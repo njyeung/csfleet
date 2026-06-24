@@ -1,16 +1,8 @@
 // Package plugin is stage 2 of building a server's filesystem: inserting plugins
-// into a single server's overlay. Provisioning (stage 1) runs once at startup and
-// lays the shared base — game, MetaMod, CounterStrikeSharp — into the read-only
-// overlay lowerdir. This stage runs once per server spin-up: after the
-// orchestrator mounts that server's overlay, it calls Apply once per enabled
-// plugin to fetch the plugin and lay it (plus its templated, DB-backed config)
-// into the overlay's writable upper layer. Nothing here touches base/.
+// into a single server's overlay.
 //
-// A manifest is a plugin recipe (one *.toml, see plugins/README.md). It is passed
-// as a string, not a path, so it can come equally from a committed file or a row
-// in the orchestrator's database. Templates can be embedded in the manifest
-// (TemplateRule.Body) so a single string carries everything; manifestDir is only
-// needed to resolve a manifest that still points at sidecar files.
+// A manifest is a plugin recipe (*.toml, see plugins/README.md). It is passed
+// as a string: template bodies are inline (TemplateRule.Body).
 package plugin
 
 import (
@@ -18,24 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"csfleet/orchestrator/internal/install"
 
 	"github.com/pelletier/go-toml/v2"
 )
-
-// Datasource is the resolved DB connection a manifest's [database] section names.
-// The manifest only carries the logical name; the orchestrator maps it to these
-// real credentials and passes them in, so secrets never live in a manifest.
-type Datasource struct {
-	Host string
-	Port int
-	Name string
-	User string
-	Pass string
-}
 
 // Manifest is a decoded plugin recipe. Fields mirror plugins/README.md.
 type Manifest struct {
@@ -65,14 +45,12 @@ type LayoutRule struct {
 }
 
 // TemplateRule renders one config file into the overlay at Path (relative to
-// game/csgo/). The body is either inlined (Body, a TOML multiline literal) or
-// read from a sidecar file (Template, relative to the manifest dir). ${db.host},
-// ${db.port}, ${db.name}, ${db.user} and ${db.pass} are substituted from the
-// datasource.
+// game/csgo/). Body is the file contents as an inline TOML multiline literal;
+// any ${key} in it is substituted with the matching env variable (e.g.
+// ${db.host}, ${CS2_PW}).
 type TemplateRule struct {
-	Template string `toml:"template"`
-	Body     string `toml:"body"`
-	Path     string `toml:"path"`
+	Body string `toml:"body"`
+	Path string `toml:"path"`
 }
 
 // ParseManifest decodes a manifest from TOML text.
@@ -88,20 +66,18 @@ func ParseManifest(tomlText string) (Manifest, error) {
 }
 
 // Apply installs the plugin described by manifestTOML into the overlay whose
-// game/csgo/ is overlayCSGO. manifestDir resolves a local source's relative path
-// and any file-based [[template]]; pass "" when the manifest is fully
-// self-contained (inline template bodies, absolute/remote source).
-func Apply(overlayCSGO, manifestTOML, manifestDir string, ds Datasource) error {
+// game/csgo/ is overlayCSGO.
+func Apply(overlayCSGO, manifestTOML string, env map[string]string) error {
 	m, err := ParseManifest(manifestTOML)
 	if err != nil {
 		return err
 	}
-	return m.applyTo(overlayCSGO, manifestDir, ds)
+	return m.applyTo(overlayCSGO, env)
 }
 
 // ApplyTo is Apply for an already-parsed manifest.
-func (m Manifest) applyTo(overlayCSGO, manifestDir string, ds Datasource) error {
-	root, cleanup, err := m.fetchSource(manifestDir)
+func (m Manifest) applyTo(overlayCSGO string, env map[string]string) error {
+	root, cleanup, err := m.fetchSource()
 	if err != nil {
 		return fmt.Errorf("%s: source: %w", m.Name, err)
 	}
@@ -113,7 +89,7 @@ func (m Manifest) applyTo(overlayCSGO, manifestDir string, ds Datasource) error 
 	if err := m.layout(root, overlayCSGO); err != nil {
 		return fmt.Errorf("%s: layout: %w", m.Name, err)
 	}
-	if err := m.templates(overlayCSGO, manifestDir, ds); err != nil {
+	if err := m.templates(overlayCSGO, env); err != nil {
 		return fmt.Errorf("%s: template: %w", m.Name, err)
 	}
 	return nil
@@ -122,18 +98,17 @@ func (m Manifest) applyTo(overlayCSGO, manifestDir string, ds Datasource) error 
 // fetchSource resolves the source into a local directory whose tree is laid out
 // as the archive root (so layout rules resolve the same way for every source
 // type). cleanup removes any temp dir; it's a no-op for a local source.
-func (m Manifest) fetchSource(manifestDir string) (root string, cleanup func(), err error) {
+func (m Manifest) fetchSource() (root string, cleanup func(), err error) {
 	noop := func() {}
 	switch m.Source.Type {
 	case "local":
 		if m.Source.Path == "" {
 			return "", noop, fmt.Errorf("local source needs a path")
 		}
-		path := m.Source.Path
-		if !filepath.IsAbs(path) && manifestDir != "" {
-			path = filepath.Join(manifestDir, path)
+		if !filepath.IsAbs(m.Source.Path) {
+			return "", noop, fmt.Errorf("local source path %q must be absolute", m.Source.Path)
 		}
-		return path, noop, nil
+		return m.Source.Path, noop, nil
 
 	case "github_release":
 		url, name, err := m.releaseAsset()
@@ -315,50 +290,30 @@ func (m Manifest) layout(root, overlayCSGO string) error {
 	return nil
 }
 
-// templates renders each [[template]] into the overlay, substituting the
-// datasource into the ${db.*} placeholders.
-func (m Manifest) templates(overlayCSGO, manifestDir string, ds Datasource) error {
-	rep := ds.replacer()
+// templates renders each [[template]] into the overlay, substituting ${key}
+// with the matching env variable.
+func (m Manifest) templates(overlayCSGO string, env map[string]string) error {
+	rep := envReplacer(env)
 	for _, t := range m.Template {
 		if t.Path == "" {
 			return fmt.Errorf("template needs a path")
 		}
-		body, err := t.read(manifestDir)
-		if err != nil {
-			return err
+		if t.Body == "" {
+			return fmt.Errorf("template %q needs a body", t.Path)
 		}
 		dest := filepath.Join(overlayCSGO, filepath.FromSlash(t.Path))
-		if err := install.AtomicWrite(dest, []byte(rep.Replace(body))); err != nil {
+		if err := install.AtomicWrite(dest, []byte(rep.Replace(t.Body))); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (t TemplateRule) read(manifestDir string) (string, error) {
-	switch {
-	case t.Body != "":
-		return t.Body, nil
-	case t.Template != "":
-		if manifestDir == "" {
-			return "", fmt.Errorf("template %q is a file reference but no manifest dir was given (inline it with body = ''' ''' to pass a single string)", t.Template)
-		}
-		data, err := os.ReadFile(filepath.Join(manifestDir, t.Template))
-		if err != nil {
-			return "", err
-		}
-		return string(data), nil
-	default:
-		return "", fmt.Errorf("template needs either body or template")
+// envReplacer substitutes ${key} with its value for every env variable.
+func envReplacer(env map[string]string) *strings.Replacer {
+	pairs := make([]string, 0, len(env)*2)
+	for k, v := range env {
+		pairs = append(pairs, "${"+k+"}", v)
 	}
-}
-
-func (ds Datasource) replacer() *strings.Replacer {
-	return strings.NewReplacer(
-		"${db.host}", ds.Host,
-		"${db.port}", strconv.Itoa(ds.Port),
-		"${db.name}", ds.Name,
-		"${db.user}", ds.User,
-		"${db.pass}", ds.Pass,
-	)
+	return strings.NewReplacer(pairs...)
 }

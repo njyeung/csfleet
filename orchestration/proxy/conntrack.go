@@ -13,6 +13,9 @@ import (
 //
 // IMPORTANT: Ordering is critical. See AddBackend() and RemoveBackend().
 func (p *Proxy) FlushConntrack(ip string) error {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
+
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return fmt.Errorf("flush conntrack: bad ip %q: %w", ip, err)

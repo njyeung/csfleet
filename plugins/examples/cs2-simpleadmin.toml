@@ -25,7 +25,6 @@ to   = "addons/counterstrikesharp"
 # owning everything else, and a plugin upgrade picks up new defaults for free
 # (a whole-file template would freeze them at the version we copied).
 [[template]]
-template = "cs2-simpleadmin.json.tmpl"
 path     = "addons/counterstrikesharp/configs/plugins/CS2-SimpleAdmin/CS2-SimpleAdmin.json"
 body = '''
 {

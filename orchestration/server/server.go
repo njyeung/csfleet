@@ -25,19 +25,10 @@ const (
 )
 
 type Definition struct {
-	Name           string
-	Map            string
-	Network        string // bridge to attach to
-	IP             string // static address on that bridge (the proxy's DNAT target)
-	GSLTToken      string
-	RconPassword   string
-	ServerPassword string
-	LAN            bool
-	GameType       int
-	GameMode       int
-	MaxPlayers     int
-	BotQuota       int
-	Env            map[string]string
+	Name    string
+	Network string            // bridge to attach to
+	IP      string            // static address on that bridge (the proxy's DNAT target)
+	Env     map[string]string // game settings + other env variables, resolved from env_variables
 }
 
 type ConfigPayload struct {
@@ -57,7 +48,7 @@ func containerName(name string) string {
 }
 
 func Start(ctx context.Context, cli *client.Client, root string, def Definition,
-	pluginNames []string, configs []ConfigPayload, ds plugin.Datasource,
+	pluginNames []string, configs []ConfigPayload,
 	loadManifest func(string) (string, error)) (*Instance, error) {
 
 	base := filepath.Join(root, "base")
@@ -75,7 +66,7 @@ func Start(ctx context.Context, cli *client.Client, root string, def Definition,
 		return nil, fmt.Errorf("resolve plugins: %w", err)
 	}
 	for _, toml := range manifests {
-		if err := plugin.Apply(csgo, toml, "", ds); err != nil {
+		if err := plugin.Apply(csgo, toml, def.Env); err != nil {
 			ov.unmount()
 			return nil, fmt.Errorf("plugin: %w", err)
 		}
@@ -118,27 +109,21 @@ func createContainer(ctx context.Context, cli *client.Client, def Definition, me
 	gotvPort := strconv.Itoa(cs2GOTVPort)
 	name := containerName(def.Name)
 
-	env := []string{
-		"CS2_SERVERNAME=" + def.Name,
-		"CS2_PORT=" + port,
-		"CS2_RCON_PORT=" + port,
-		"CS2_RCONPW=" + def.RconPassword,
-		"CS2_PW=" + def.ServerPassword,
-		"CS2_LAN=" + boolStr(def.LAN),
-		"CS2_GAMETYPE=" + strconv.Itoa(def.GameType),
-		"CS2_GAMEMODE=" + strconv.Itoa(def.GameMode),
-		"CS2_MAXPLAYERS=" + strconv.Itoa(def.MaxPlayers),
-		"CS2_STARTMAP=" + def.Map,
-		"CS2_BOT_QUOTA=" + strconv.Itoa(def.BotQuota),
-		"TV_PORT=" + gotvPort,
-	}
+	// Resolved game settings come from def.Env. The
+	// routing vars are appended last so they always win
 
-	if def.GSLTToken != "" {
-		env = append(env, "SRCDS_TOKEN="+def.GSLTToken)
-	}
+	// CS2_SERVERNAME leads, so a server-scoped env var can override the default display name.
+	env := make([]string, 0, len(def.Env)+4)
+	env = append(env, "CS2_SERVERNAME="+def.Name)
+
 	for k, v := range def.Env {
 		env = append(env, k+"="+v)
 	}
+	env = append(env,
+		"CS2_PORT="+port,
+		"CS2_RCON_PORT="+port,
+		"TV_PORT="+gotvPort,
+	)
 
 	cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
 
@@ -165,11 +150,4 @@ func createContainer(ctx context.Context, cli *client.Client, def Definition, me
 	}
 
 	return resp.ID, nil
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
 }

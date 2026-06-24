@@ -205,58 +205,69 @@ func (s *Store) migrate() error {
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
+		-- A cluster is the shared spec its members inherit. port is structural (the
+		-- single external ingress every member sits behind); auto_token,
+		-- accepting_connections and restart/stop are the inheritable override-tier
+		-- defaults; lb_policy is how the proxy spreads new sessions across members.
 		CREATE TABLE IF NOT EXISTS clusters (
-			name       VARCHAR(255) NOT NULL PRIMARY KEY,
-			port       INT          NOT NULL UNIQUE,
-			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+			name                  VARCHAR(255) NOT NULL PRIMARY KEY,
+			port                  INT          NOT NULL UNIQUE,
+			auto_token            BOOLEAN      NOT NULL DEFAULT TRUE,
+			accepting_connections BOOLEAN      NOT NULL DEFAULT TRUE,
+			restart_after_hrs     FLOAT        DEFAULT NULL,
+			stop_after_hrs        FLOAT        DEFAULT NULL,
+			lb_policy             VARCHAR(32)  NOT NULL DEFAULT 'round_robin',
+			updated_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
-		-- ip: static bridge address, the proxy's DNAT target. port: external host
-		-- port clients reach this server on when standalone, NULL when it's a cluster
-		-- backend (reached via clusters.port). Internal game/GOTV ports are constants.
+		-- ip: static bridge address, the proxy's DNAT target
+		-- port: external host port clients reach this server on when standalone
+		--
+		-- A member inherits its cluster on the override tier: auto_token,
+		-- accepting_connections (drain), restart_after_hrs, stop_after_hrs. NULL on
+		-- the server means "inherit the cluster's value"; a non-NULL overrides it.
+		-- For the hour fields a value < 0 means "no limit" (distinct from NULL), so a
+		-- server can opt out of a cluster cadence. The hour fields default to -1 (no
+		-- limit) so a fresh server never silently inherits a restart/stop.
 		CREATE TABLE IF NOT EXISTS servers (
-			name              VARCHAR(255) NOT NULL PRIMARY KEY,
-			map_name          VARCHAR(255) NOT NULL,
-			ip                VARCHAR(45)  NOT NULL UNIQUE,
-			port              INT          UNIQUE,
-			cluster           VARCHAR(255) DEFAULT NULL,
-			gslt_token        VARCHAR(255),
-			rcon_password     VARCHAR(255),
-			server_password   VARCHAR(255),
-			lan               BOOLEAN      NOT NULL,
-			game_type         INT,
-			game_mode         INT,
-			max_players       INT,
-			bot_quota         INT,
-			restart_after_hrs FLOAT,
-			stop_after_hrs    FLOAT,
-			desired_state     ENUM('running','stopped','disabled') NOT NULL DEFAULT 'running',
-			updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			name                  VARCHAR(255) NOT NULL PRIMARY KEY,
+			ip                    VARCHAR(45)  NOT NULL UNIQUE,
+			port                  INT          UNIQUE,
+			cluster               VARCHAR(255) DEFAULT NULL,
+			auto_token            BOOLEAN      DEFAULT NULL,
+			accepting_connections BOOLEAN      DEFAULT NULL,
+			restart_after_hrs     FLOAT        DEFAULT -1,
+			stop_after_hrs        FLOAT        DEFAULT -1,
+			desired_state         ENUM('running','stopped') NOT NULL DEFAULT 'running',
+			updated_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			CONSTRAINT server_reachable CHECK ((cluster IS NULL) <> (port IS NULL)),
-			FOREIGN KEY (gslt_token) REFERENCES gslt_tokens(token),
 			FOREIGN KEY (cluster) REFERENCES clusters(name)
 		);
 
+		-- scope is global|cluster|server; scope_name is '' for global, else the
+		-- cluster or server name. A server resolves global < cluster < server
+		-- (most specific wins for env, deduped union for plugins/configs).
 		CREATE TABLE IF NOT EXISTS env_variables (
-` + "			`key`" + `   VARCHAR(255) NOT NULL,
-			value    TEXT         NOT NULL,
-			server   VARCHAR(255) NOT NULL DEFAULT '',
-` + "			PRIMARY KEY (`key`, server)" + `
+` + "			`key`" + `      VARCHAR(255) NOT NULL,
+			value      TEXT         NOT NULL,
+			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'global',
+			scope_name VARCHAR(255) NOT NULL DEFAULT '',
+` + "			PRIMARY KEY (`key`, scope, scope_name)" + `
 		);
 
-		CREATE TABLE IF NOT EXISTS server_plugins (
-			server     VARCHAR(255) NOT NULL,
+		CREATE TABLE IF NOT EXISTS plugin_assignments (
 			plugin     VARCHAR(255) NOT NULL,
-			PRIMARY KEY (server, plugin),
-			FOREIGN KEY (server) REFERENCES servers(name) ON DELETE CASCADE,
+			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'server',
+			scope_name VARCHAR(255) NOT NULL DEFAULT '',
+			PRIMARY KEY (plugin, scope, scope_name),
 			FOREIGN KEY (plugin) REFERENCES plugin_manifests(name)
 		);
 
-		CREATE TABLE IF NOT EXISTS server_configs (
-			server     VARCHAR(255) NOT NULL,
+		CREATE TABLE IF NOT EXISTS config_assignments (
 			config     VARCHAR(255) NOT NULL,
-			PRIMARY KEY (server, config),
-			FOREIGN KEY (server) REFERENCES servers(name) ON DELETE CASCADE,
+			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'server',
+			scope_name VARCHAR(255) NOT NULL DEFAULT '',
+			PRIMARY KEY (config, scope, scope_name),
 			FOREIGN KEY (config) REFERENCES config_files(name)
 		);
 	`)
@@ -267,8 +278,10 @@ func (s *Store) migrate() error {
 }
 
 // ensurePortTriggers keeps the external host ports in servers.port and
-// clusters.port from colliding — they share the host's port space. UNIQUE
-// already guards each column on its own; these cover the cross-table case.
+// clusters.port from colliding.
+//
+// UNIQUE already guards each column on its own;
+// these cover the cross-table case.
 func (s *Store) ensurePortTriggers() error {
 	add := func(name, event, other, msg string) string {
 		return fmt.Sprintf(`CREATE OR REPLACE TRIGGER %s %s FOR EACH ROW
@@ -299,6 +312,7 @@ func (s *Store) seedDefaults() error {
 		{"db.name", s.cfg.Name},
 		{"db.user", s.cfg.User},
 		{"db.pass", s.cfg.Pass},
+		{"db.rootpass", s.cfg.RootPass},
 	}
 	for _, d := range defaults {
 		_, err := s.DB.Exec(
@@ -310,30 +324,6 @@ func (s *Store) seedDefaults() error {
 		}
 	}
 	return nil
-}
-
-// LoadEnv returns the env_variables visible to a server: the globals
-// (server = '') overlaid with that server's own rows. Pass "" for just the
-// globals. The db.* keys seeded by seedDefaults feed the plugin Datasource.
-func (s *Store) LoadEnv(server string) (map[string]string, error) {
-	rows, err := s.DB.Query(
-		"SELECT `key`, value FROM env_variables WHERE server = '' OR server = ? ORDER BY server",
-		server,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("load env: %w", err)
-	}
-	defer rows.Close()
-
-	env := map[string]string{}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, fmt.Errorf("load env: %w", err)
-		}
-		env[k] = v // specific server rows sort after '' and overwrite globals
-	}
-	return env, rows.Err()
 }
 
 func (s *Store) LoadManifest(name string) (string, error) {

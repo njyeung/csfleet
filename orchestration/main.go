@@ -8,17 +8,18 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"strings"
 	"syscall"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
 	"csfleet/orchestrator/database"
-	"csfleet/orchestrator/plugin"
+	"csfleet/orchestrator/fleet"
 	"csfleet/orchestrator/provision"
 	"csfleet/orchestrator/proxy"
-	"csfleet/orchestrator/server"
 )
 
 const (
@@ -79,6 +80,30 @@ func removeNetwork(ctx context.Context, cli *client.Client, name string) error {
 	return cli.NetworkRemove(ctx, name)
 }
 
+// killOrphans removes csfleet-* game server containers left from a previous
+// crash, similar to how ensureNetwork recreates a stale bridge.
+func killOrphans(ctx context.Context, cli *client.Client) {
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("name", "csfleet-")),
+	})
+	if err != nil {
+		log.Printf("[orchestrator] list containers for orphan cleanup: %v", err)
+		return
+	}
+	for _, c := range containers {
+		for _, n := range c.Names {
+			name := strings.TrimPrefix(n, "/")
+			if strings.HasPrefix(name, "csfleet-") {
+				log.Printf("[orchestrator] killing orphan container %s (%s)", name, c.ID[:12])
+				t := 10
+				cli.ContainerStop(ctx, c.ID, container.StopOptions{Timeout: &t})
+				cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true})
+			}
+		}
+	}
+}
+
 func repoRoot() string {
 	if env := os.Getenv("CSFLEET_ROOT"); env != "" {
 		return env
@@ -101,8 +126,7 @@ func main() {
 	}
 	defer cli.Close()
 
-	// TODO: when we have server lifecycle, we need to make sure any orphaned containers
-	// are killed here before ensureNetwork
+	killOrphans(ctx, cli)
 
 	if err := ensureNetwork(ctx, cli, netName, netSubnet, netGateway); err != nil {
 		log.Fatalf("[orchestrator] network: %v", err)
@@ -136,58 +160,24 @@ func main() {
 		log.Fatalf("[orchestrator] provision: %v", err)
 	}
 
-	env, err := store.LoadEnv("")
-	if err != nil {
-		log.Fatalf("[orchestrator] load env: %v", err)
-	}
-	dbPort, _ := strconv.Atoi(env["db.port"])
-	ds := plugin.Datasource{
-		Host: env["db.host"],
-		Port: dbPort,
-		Name: env["db.name"],
-		User: env["db.user"],
-		Pass: env["db.pass"],
-	}
-
-	// --- UDP proxy: put the test server behind one external port ---
-	const backendIP = "172.30.0.10" // the test server's static bridge address
-	const extPort = 4567            // external udp port clients connect to
-
 	px := proxy.New(proxy.Config{Table: netName, Subnet: netSubnet})
 	if err := px.Start(ctx); err != nil {
 		log.Fatalf("[orchestrator] proxy: %v", err)
 	}
 	defer px.Stop()
 
-	// Clean slate before the container binds the address, so no stale conntrack
-	// entry can NAT a client straight into a fresh instance on the same IP.
-	if err := px.FlushConntrack(backendIP); err != nil {
-		log.Printf("[orchestrator] flush conntrack %s: %v", backendIP, err)
-	}
+	mgr := fleet.New(store, px, cli, root)
 
-	inst, err := server.Start(ctx, cli, root, server.Definition{
-		Name:       "test",
-		Map:        "de_dust2",
-		Network:    netName,
-		IP:         backendIP,
-		LAN:        true,
-		GameMode:   1,
-		MaxPlayers: 10,
-	}, nil, nil, ds, store.LoadManifest)
-	if err != nil {
-		log.Fatalf("[orchestrator] server: %v", err)
-	}
-	defer inst.Stop(context.Background(), cli)
-
-	// Register the live backend: new UDP flows to extPort now DNAT to backendIP:27015.
-	if err := px.AddBackend(extPort, backendIP); err != nil {
-		log.Fatalf("[orchestrator] add backend: %v", err)
-	}
-	log.Printf("[orchestrator] 'test' reachable on udp/%d -> %s:27015", extPort, backendIP)
+	go func() {
+		if err := mgr.Run(ctx); err != nil {
+			log.Fatalf("[orchestrator] manager: %v", err)
+		}
+	}()
 
 	log.Println("[orchestrator] ready — waiting for signal")
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Println("[orchestrator] shutting down")
+	mgr.Stop()
 }
