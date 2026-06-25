@@ -2,21 +2,8 @@ package database
 
 import "fmt"
 
-// ResolveServer collapses a server row and its cluster (if any) into the
-// EffectiveServer the fleet runs against. Three inheritance models meet here:
-//
-//   - structural: the external port is the server's own when standalone, else the
-//     cluster's. The server_reachable CHECK guarantees exactly one is set.
-//   - override: auto_token / accepting / restart / stop resolve most-specific-wins
-//     — the server's value if set, else the cluster's, else a built-in default.
-//     For the hour fields a stored value < 0 means "no limit", distinct from NULL
-//     ("inherit"): that's what lets a server opt out of a cluster-wide cadence.
-//   - cluster-owned: lb_policy comes straight from the cluster (meaningless for a
-//     standalone server, left "").
-//
-// The list-valued settings — env vars (LoadEnv) and plugin/config assignments
-// (EffectivePlugins / EffectiveConfigs) — resolve the same most-specific-wins way
-// and live just below; the raw per-scope reads/writes they build on stay in crud.go.
+// ResolveServer collapses a server row and its cluster into the
+// EffectiveServer the fleet runs against.
 func (s *Store) ResolveServer(name string) (EffectiveServer, error) {
 	row, err := s.GetServer(name)
 	if err != nil {
@@ -54,10 +41,6 @@ func (s *Store) ResolveServer(name string) (EffectiveServer, error) {
 }
 
 // --- Env overlay (global < cluster < server; most specific key wins) ---
-
-// LoadEnv returns the env_variables visible to a server: globals overlaid with
-// the server's cluster scope, then the server's own scope (most specific key
-// wins). Pass "" for cluster when the server is standalone.
 //
 // The db.* keys seeded by seedDefaults are ordinary env vars injected into the container.
 func (s *Store) LoadEnv(server, cluster string) (map[string]string, error) {
@@ -83,37 +66,6 @@ func (s *Store) LoadEnv(server, cluster string) (map[string]string, error) {
 		env[k] = v // later (more specific) scope overwrites
 	}
 	return env, rows.Err()
-}
-
-// --- Plugin/config assignments (most specific scope wins, whole-list) ---
-//
-// EffectivePlugins / EffectiveConfigs return the assignment list from the most
-// specific scope that defines one — the server's own, else its cluster's, else
-// global — as a whole-list replacement rather than a union, so the model matches
-// every other setting: the most specific definition wins wholesale. Trade-off: an
-// empty list at a scope reads as "inherit", not "explicitly none", and tweaking a
-// single entry at the server scope means redeclaring the whole list.
-//
-// The per-scope reads/writes (PluginsFor / SetPlugins / ...) and the shared
-// assignmentsFor / setAssignments / scanStrings helpers stay in crud.go.
-func (s *Store) EffectivePlugins(server, cluster string) ([]string, error) {
-	return s.effectiveAssignments("plugin", "plugin_assignments", server, cluster)
-}
-
-func (s *Store) EffectiveConfigs(server, cluster string) ([]string, error) {
-	return s.effectiveAssignments("config", "config_assignments", server, cluster)
-}
-
-func (s *Store) effectiveAssignments(col, table, server, cluster string) ([]string, error) {
-	if items, err := s.assignmentsFor(col, table, "server", server); err != nil || len(items) > 0 {
-		return items, err
-	}
-	if cluster != "" {
-		if items, err := s.assignmentsFor(col, table, "cluster", cluster); err != nil || len(items) > 0 {
-			return items, err
-		}
-	}
-	return s.assignmentsFor(col, table, "global", "")
 }
 
 // resolveBool applies the override tier to a tri-state boolean: the server's own

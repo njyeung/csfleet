@@ -166,23 +166,31 @@ func waitReady(ctx context.Context, cli *client.Client, cfg Config) error {
 }
 
 func openDB(cfg Config) (*sql.DB, error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&multiStatements=true",
+	// Bootstrap the database on a throwaway connection that isn't scoped to any
+	// schema. We can't put cfg.Name in the DSN yet because it may not exist.
+	bootDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&multiStatements=true",
 		cfg.User, cfg.Pass, cfg.Host, cfg.Port)
+	boot, err := sql.Open("mysql", bootDSN)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := boot.Exec("CREATE DATABASE IF NOT EXISTS " + cfg.Name); err != nil {
+		boot.Close()
+		return nil, fmt.Errorf("create database: %w", err)
+	}
+	boot.Close()
+
+	// Open the real pool with the database in the DSN so every pooled connection
+	// is scoped to it. A per-connection "USE" wouldn't work: database/sql may
+	// hand later queries a different connection that never ran it.
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&multiStatements=true",
+		cfg.User, cfg.Pass, cfg.Host, cfg.Port, cfg.Name)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
 	db.SetConnMaxLifetime(5 * time.Minute)
-
-	if _, err := db.Exec("CREATE DATABASE IF NOT EXISTS " + cfg.Name); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("create database: %w", err)
-	}
-	if _, err := db.Exec("USE " + cfg.Name); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("use database: %w", err)
-	}
 	return db, nil
 }
 
@@ -246,7 +254,8 @@ func (s *Store) migrate() error {
 
 		-- scope is global|cluster|server; scope_name is '' for global, else the
 		-- cluster or server name. A server resolves global < cluster < server
-		-- (most specific wins for env, deduped union for plugins/configs).
+		
+
 		CREATE TABLE IF NOT EXISTS env_variables (
 ` + "			`key`" + `      VARCHAR(255) NOT NULL,
 			value      TEXT         NOT NULL,
@@ -263,12 +272,30 @@ func (s *Store) migrate() error {
 			FOREIGN KEY (plugin) REFERENCES plugin_manifests(name)
 		);
 
+		-- Marks a scope that holds an explicit plugin set. Presence means "this
+		-- scope overrides" even with 0 rows in plugin_assignments above. Absence
+		-- means inherit from the parent scope (server < cluster < global).
+
+		CREATE TABLE IF NOT EXISTS plugin_overrides (
+			scope      ENUM('global','cluster','server') NOT NULL,
+			scope_name VARCHAR(255) NOT NULL DEFAULT '',
+			PRIMARY KEY (scope, scope_name)
+		);
+
 		CREATE TABLE IF NOT EXISTS config_assignments (
 			config     VARCHAR(255) NOT NULL,
 			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'server',
 			scope_name VARCHAR(255) NOT NULL DEFAULT '',
 			PRIMARY KEY (config, scope, scope_name),
 			FOREIGN KEY (config) REFERENCES config_files(name)
+		);
+
+		-- Same as plugin_overrides, for config_assignments
+		
+		CREATE TABLE IF NOT EXISTS config_overrides (
+			scope      ENUM('global','cluster','server') NOT NULL,
+			scope_name VARCHAR(255) NOT NULL DEFAULT '',
+			PRIMARY KEY (scope, scope_name)
 		);
 	`)
 	if err != nil {

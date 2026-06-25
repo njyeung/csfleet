@@ -77,3 +77,17 @@ type EnvVarRow struct {
 	Scope     string
 	ScopeName string
 }
+
+// ScopedPlugin is the set of plugins defined at one scope. Overridden
+// distinguishes an explicit set: possibly an empty Items, meaning "run none".
+type ScopedPlugin struct {
+	Overridden bool
+	Items      []string
+}
+
+// ScopedConfig is the set of configs defined at one scope. It carries the same
+// inherit/override/run-none semantics as ScopedPlugin.
+type ScopedConfig struct {
+	Overridden bool
+	Items      []string
+}

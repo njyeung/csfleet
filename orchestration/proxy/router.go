@@ -92,22 +92,24 @@ func (r *router) addBackend(port uint16, ip netip.Addr) (newGen, oldGen uint64, 
 //
 // It returns the removed backend's generation (its nft map key) so the caller
 // can delete the matching map element. ok is false if no such backend existed.
-func (r *router) removeBackend(port uint16, ip netip.Addr) (gen uint64, ok bool) {
+// empty reports whether the pool has no backends left after the removal, so a
+// caller reassigning a port (rebind) can decide to unmanage the now-drained port.
+func (r *router) removeBackend(port uint16, ip netip.Addr) (gen uint64, ok, empty bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	p := r.pools[port]
 	if p == nil {
-		return 0, false
+		return 0, false, false
 	}
 	for i := range p.backends {
 		if p.backends[i].ip == ip {
 			gen = p.backends[i].gen
 			p.backends = append(p.backends[:i], p.backends[i+1:]...)
-			return gen, true
+			return gen, true, len(p.backends) == 0
 		}
 	}
-	return 0, false
+	return 0, false, len(p.backends) == 0
 }
 
 // unmanage removes a port entirely. Afterwards its packets are accepted

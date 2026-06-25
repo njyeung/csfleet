@@ -12,6 +12,7 @@ type Config struct {
 	DBUser     string
 	DBPass     string
 	DBRootPass string
+	APIAddr    string // HTTP control-plane listen address
 }
 
 func configFromEnv() Config {
@@ -23,6 +24,7 @@ func configFromEnv() Config {
 		DBUser:     envOr("DB_USER", "csfleet"),
 		DBPass:     envOr("DB_PASS", "csfleet"),
 		DBRootPass: envOr("DB_ROOT_PASS", "csfleet"),
+		APIAddr:    envOr("API_ADDR", ":8080"),
 	}
 }
 

@@ -41,17 +41,42 @@ func (s *Store) GetServer(name string) (ServerRow, error) {
 	return r, nil
 }
 
-func (s *Store) CreateServer(r ServerRow) error {
-	_, err := s.DB.Exec(`INSERT INTO servers
+// CreateServer inserts a server row together with its create-time, immutable
+// server-scope plugin/config/env assignments in one transaction, so a worker
+// never observes the row before its overrides. A nil plugins/configs means
+// "inherit" (no override marker written); a non-nil slice (even empty) is an
+// explicit override. The duplicate-name PK violation aborts the whole tx.
+func (s *Store) CreateServer(r ServerRow, plugins, configs *[]string, env map[string]string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT INTO servers
 		(name, ip, port, cluster, auto_token, accepting_connections,
 		 restart_after_hrs, stop_after_hrs, desired_state)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Name, r.IP, r.Port, r.Cluster, r.AutoToken, r.AcceptingConns,
-		r.RestartAfterHrs, r.StopAfterHrs, r.DesiredState)
-	if err != nil {
+		r.RestartAfterHrs, r.StopAfterHrs, r.DesiredState); err != nil {
 		return fmt.Errorf("create server %q: %w", r.Name, err)
 	}
-	return nil
+	if plugins != nil {
+		if err := setPluginsTx(tx, "server", r.Name, *plugins); err != nil {
+			return err
+		}
+	}
+	if configs != nil {
+		if err := setConfigsTx(tx, "server", r.Name, *configs); err != nil {
+			return err
+		}
+	}
+	for k, v := range env {
+		if err := setEnvTx(tx, k, v, "server", r.Name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateServer(name string, r ServerRow) error {
@@ -71,7 +96,7 @@ func (s *Store) UpdateServer(name string, r ServerRow) error {
 // DeleteServer removes the server and any env vars / plugin / config
 // assignments scoped to it (those have no FK to servers, so clean them here).
 func (s *Store) DeleteServer(name string) error {
-	return s.deleteScoped("servers", "server", name)
+	return s.deleteScopedServer(name)
 }
 
 func (s *Store) UpdateServerDesiredState(name, state string) error {
@@ -116,15 +141,38 @@ func (s *Store) GetCluster(name string) (ClusterRow, error) {
 	return r, nil
 }
 
-func (s *Store) CreateCluster(r ClusterRow) error {
-	_, err := s.DB.Exec(`INSERT INTO clusters
+// CreateCluster inserts a cluster row together with its create-time, immutable
+// cluster-scope plugin/config/env assignments in one transaction. Mirrors
+// CreateServer; see its doc for the nil-vs-empty plugins/configs semantics.
+func (s *Store) CreateCluster(r ClusterRow, plugins, configs *[]string, env map[string]string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`INSERT INTO clusters
 		(name, port, auto_token, accepting_connections, restart_after_hrs, stop_after_hrs, lb_policy)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.Name, r.Port, r.AutoToken, r.AcceptingConns, r.RestartAfterHrs, r.StopAfterHrs, r.LBPolicy)
-	if err != nil {
+		r.Name, r.Port, r.AutoToken, r.AcceptingConns, r.RestartAfterHrs, r.StopAfterHrs, r.LBPolicy); err != nil {
 		return fmt.Errorf("create cluster %q: %w", r.Name, err)
 	}
-	return nil
+	if plugins != nil {
+		if err := setPluginsTx(tx, "cluster", r.Name, *plugins); err != nil {
+			return err
+		}
+	}
+	if configs != nil {
+		if err := setConfigsTx(tx, "cluster", r.Name, *configs); err != nil {
+			return err
+		}
+	}
+	for k, v := range env {
+		if err := setEnvTx(tx, k, v, "cluster", r.Name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateCluster(name string, r ClusterRow) error {
@@ -142,12 +190,12 @@ func (s *Store) UpdateCluster(name string, r ClusterRow) error {
 // DeleteCluster removes the cluster and any cluster-scoped env vars / plugin /
 // config assignments. (servers.cluster FK blocks deletion while members exist.)
 func (s *Store) DeleteCluster(name string) error {
-	return s.deleteScoped("clusters", "cluster", name)
+	return s.deleteScopedCluster(name)
 }
 
-// deleteScoped deletes a server or cluster row plus the env/plugin/config
+// deleteScopedServer deletes a server row plus the env/plugin/config
 // assignments scoped to it, in one transaction.
-func (s *Store) deleteScoped(table, scope, name string) error {
+func (s *Store) deleteScopedServer(name string) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -155,14 +203,41 @@ func (s *Store) deleteScoped(table, scope, name string) error {
 	defer tx.Rollback()
 
 	stmts := []string{
-		"DELETE FROM " + table + " WHERE name = ?",
-		"DELETE FROM env_variables WHERE scope = '" + scope + "' AND scope_name = ?",
-		"DELETE FROM plugin_assignments WHERE scope = '" + scope + "' AND scope_name = ?",
-		"DELETE FROM config_assignments WHERE scope = '" + scope + "' AND scope_name = ?",
+		"DELETE FROM servers WHERE name = ?",
+		"DELETE FROM env_variables WHERE scope = 'server' AND scope_name = ?",
+		"DELETE FROM plugin_assignments WHERE scope = 'server' AND scope_name = ?",
+		"DELETE FROM plugin_overrides WHERE scope = 'server' AND scope_name = ?",
+		"DELETE FROM config_assignments WHERE scope = 'server' AND scope_name = ?",
+		"DELETE FROM config_overrides WHERE scope = 'server' AND scope_name = ?",
 	}
 	for _, q := range stmts {
 		if _, err := tx.Exec(q, name); err != nil {
-			return fmt.Errorf("delete %s %q: %w", scope, name, err)
+			return fmt.Errorf("delete server %q: %w", name, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// deleteScopedCluster deletes a cluster row plus the env/plugin/config
+// assignments scoped to it, in one transaction.
+func (s *Store) deleteScopedCluster(name string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		"DELETE FROM clusters WHERE name = ?",
+		"DELETE FROM env_variables WHERE scope = 'cluster' AND scope_name = ?",
+		"DELETE FROM plugin_assignments WHERE scope = 'cluster' AND scope_name = ?",
+		"DELETE FROM plugin_overrides WHERE scope = 'cluster' AND scope_name = ?",
+		"DELETE FROM config_assignments WHERE scope = 'cluster' AND scope_name = ?",
+		"DELETE FROM config_overrides WHERE scope = 'cluster' AND scope_name = ?",
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q, name); err != nil {
+			return fmt.Errorf("delete cluster %q: %w", name, err)
 		}
 	}
 	return tx.Commit()
@@ -311,7 +386,22 @@ func (s *Store) ListEnvVars(scope, scopeName string) ([]EnvVarRow, error) {
 }
 
 func (s *Store) SetEnvVar(key, value, scope, scopeName string) error {
-	_, err := s.DB.Exec(
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := setEnvTx(tx, key, value, scope, scopeName); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// setEnvTx upserts one env var within a transaction. Shared by SetEnvVar and the
+// CreateServer/CreateCluster transactions so a created resource's scope env lands
+// atomically with its row.
+func setEnvTx(tx *sql.Tx, key, value, scope, scopeName string) error {
+	_, err := tx.Exec(
 		"INSERT INTO env_variables (`key`, value, scope, scope_name) VALUES (?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE value = VALUES(value)",
 		key, value, scope, scopeName)
@@ -329,60 +419,6 @@ func (s *Store) DeleteEnvVar(key, scope, scopeName string) error {
 		return fmt.Errorf("delete env var %q: %w", key, err)
 	}
 	return nil
-}
-
-// --- Plugin assignments (scoped global|cluster|server) ---
-
-func (s *Store) PluginsFor(scope, scopeName string) ([]string, error) {
-	return s.assignmentsFor("plugin", "plugin_assignments", scope, scopeName)
-}
-
-func (s *Store) SetPlugins(scope, scopeName string, plugins []string) error {
-	return s.setAssignments("plugin", "plugin_assignments", scope, scopeName, plugins)
-}
-
-// --- Config assignments (scoped global|cluster|server) ---
-
-func (s *Store) ConfigsFor(scope, scopeName string) ([]string, error) {
-	return s.assignmentsFor("config", "config_assignments", scope, scopeName)
-}
-
-func (s *Store) SetConfigs(scope, scopeName string, configs []string) error {
-	return s.setAssignments("config", "config_assignments", scope, scopeName, configs)
-}
-
-// --- Shared assignment helpers ---
-
-func (s *Store) assignmentsFor(col, table, scope, scopeName string) ([]string, error) {
-	rows, err := s.DB.Query(
-		"SELECT "+col+" FROM "+table+" WHERE scope = ? AND scope_name = ? ORDER BY "+col,
-		scope, scopeName)
-	if err != nil {
-		return nil, fmt.Errorf("%s assignments: %w", col, err)
-	}
-	defer rows.Close()
-	return scanStrings(rows)
-}
-
-func (s *Store) setAssignments(col, table, scope, scopeName string, items []string) error {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(
-		"DELETE FROM "+table+" WHERE scope = ? AND scope_name = ?", scope, scopeName); err != nil {
-		return fmt.Errorf("clear %s assignments: %w", col, err)
-	}
-	for _, it := range items {
-		if _, err := tx.Exec(
-			"INSERT INTO "+table+" ("+col+", scope, scope_name) VALUES (?, ?, ?)",
-			it, scope, scopeName); err != nil {
-			return fmt.Errorf("insert %s %q: %w", col, it, err)
-		}
-	}
-	return tx.Commit()
 }
 
 // scanStrings collects a single-column string result into a slice.

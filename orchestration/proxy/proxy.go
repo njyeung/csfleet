@@ -180,27 +180,56 @@ func (p *Proxy) AddBackend(port uint16, ip string) error {
 	return nil
 }
 
-// RemoveBackend drops a backend from its port's pool. The pool is kept even if
-// it becomes empty, so the port stays managed and its packets are dropped.
+// RemoveBackendDoNotUnbind drops a backend from its port's pool but keeps the
+// pool even when it becomes empty, so the port stays managed and its packets are
+// dropped. Used on stop/crash, where the backend is expected back on the same
+// port and we don't want to let another program take that port.
 //
 // IMPORTANT: The manager MUST perform these in order: Remove Backend -> Flush Conntrack
 // Stopping the server is the least time-sensitive, it can technically happen anywhere, but the
 // cleanest order is right after Flush Conntrack
-func (p *Proxy) RemoveBackend(port uint16, ip string) error {
+func (p *Proxy) RemoveBackendDoNotUnbind(port uint16, ip string) error {
 	p.opMu.Lock()
 	defer p.opMu.Unlock()
+	_, err := p.removeBackendLocked(port, ip)
+	return err
+}
 
+// RemoveBackendMaybeUnbind drops a backend and, if that drains the pool,
+// unmanages the port in the same opMu-held critical section.
+//
+// Used:
+// - Normally when deleting servers.
+// - during rebind when a server moves to a new external port.
+func (p *Proxy) RemoveBackendMaybeUnbind(port uint16, ip string) error {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
+	empty, err := p.removeBackendLocked(port, ip)
+	if err != nil {
+		return err
+	}
+	if empty {
+		p.r.unmanage(port)
+		log.Printf("[proxy] port %d unmanaged", port)
+	}
+	return nil
+}
+
+// removeBackendLocked is the shared body of the RemoveBackend* entrypoints. The
+// caller must hold opMu. It reports whether the pool is now empty.
+func (p *Proxy) removeBackendLocked(port uint16, ip string) (empty bool, err error) {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
-		return fmt.Errorf("remove backend: bad ip %q: %w", ip, err)
+		return false, fmt.Errorf("remove backend: bad ip %q: %w", ip, err)
 	}
-	if gen, ok := p.r.removeBackend(port, addr.Unmap()); ok {
+	gen, ok, empty := p.r.removeBackend(port, addr.Unmap())
+	if ok {
 		if err := p.delPoolElement(uint32(gen)); err != nil {
 			log.Printf("[proxy] remove backend %s: element: %v", ip, err)
 		}
 	}
 	log.Printf("[proxy] backend %s down on port %d", ip, port)
-	return nil
+	return empty, nil
 }
 
 // Unmanage stops managing an external port entirely; afterwards its packets are

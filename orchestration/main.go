@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	"csfleet/orchestrator/api"
 	"csfleet/orchestrator/database"
 	"csfleet/orchestrator/fleet"
 	"csfleet/orchestrator/provision"
@@ -30,6 +31,10 @@ const (
 	netSubnet  = "172.30.0.0/24" // fixed subnet so we can assign static IPs
 	netGateway = "172.30.0.1"
 	mariaIP    = "172.30.0.2" // maria's static address on the bridge
+
+	// hostIPPrefix is the /24 host prefix the API auto-allocates server IPs from.
+	// Reserved low addresses (.1 gateway, .2 maria, .3 nginx) sit below its floor.
+	hostIPPrefix = "172.30.0."
 )
 
 // ensureNetwork creates the shared bridge with a fixed subnet if it's missing,
@@ -167,17 +172,30 @@ func main() {
 	defer px.Stop()
 
 	mgr := fleet.New(store, px, cli, root)
+	apiSrv := api.New(api.Config{Addr: cfg.APIAddr, IPPrefix: hostIPPrefix}, store, mgr)
 
+	// runCtx cancels on the first SIGINT/SIGTERM; the long-running services derive
+	// from it, while setup and the teardown defers above keep using the background
+	// ctx so cleanup still runs after a signal.
+	runCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	mgrDone := make(chan struct{})
 	go func() {
-		if err := mgr.Run(ctx); err != nil {
-			log.Fatalf("[orchestrator] manager: %v", err)
+		defer close(mgrDone)
+		if err := mgr.Run(runCtx); err != nil {
+			log.Printf("[orchestrator] manager: %v", err)
+		}
+	}()
+	go func() {
+		if err := apiSrv.Run(runCtx); err != nil {
+			log.Printf("[orchestrator] api: %v", err)
 		}
 	}()
 
 	log.Println("[orchestrator] ready — waiting for signal")
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	<-runCtx.Done()
 	log.Println("[orchestrator] shutting down")
 	mgr.Stop()
+	<-mgrDone // let workers tear down their containers before the defers remove the network
 }

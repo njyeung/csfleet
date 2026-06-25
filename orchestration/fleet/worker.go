@@ -270,7 +270,10 @@ func (w *worker) teardownLive(reason string) {
 	if inst == nil {
 		return
 	}
-	if err := w.mgr.proxy.RemoveBackend(port, ip); err != nil {
+
+	// when we stop a server, we want to keep its port binded
+	// so that the user can start it back up and maintain the same port.
+	if err := w.mgr.proxy.RemoveBackendDoNotUnbind(port, ip); err != nil {
 		log.Printf("[fleet/%s] remove backend (%s): %v", w.name, reason, err)
 	}
 	if err := w.mgr.proxy.FlushConntrack(ip); err != nil {
@@ -308,12 +311,15 @@ func (w *worker) markCrashed(reason string) {
 }
 
 // rebind moves a live backend to a new external port (cluster/own port changed).
+// When this drains the old port (the last cluster member moved off, or a
+// standalone's sole backend left) it unmanages the old port so it stops
+// black-holing packets rather than lingering as an empty managed pool.
 func (w *worker) rebind(newPort uint16) {
 	w.mu.Lock()
 	oldPort, ip := w.port, w.ip
 	w.mu.Unlock()
 
-	if err := w.mgr.proxy.RemoveBackend(oldPort, ip); err != nil {
+	if err := w.mgr.proxy.RemoveBackendMaybeUnbind(oldPort, ip); err != nil {
 		log.Printf("[fleet/%s] rebind remove backend: %v", w.name, err)
 	}
 	if err := w.mgr.proxy.AddBackend(newPort, ip); err != nil {
@@ -390,7 +396,7 @@ func (w *worker) snapshot() ServerStatus {
 	defer w.mu.Unlock()
 	return ServerStatus{
 		ServerRow:   w.row,
-		ActualState: w.phase,
+		ActualState: string(w.phase),
 		LastError:   w.lastErr,
 	}
 }

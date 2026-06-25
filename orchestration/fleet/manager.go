@@ -108,7 +108,7 @@ func (m *Manager) dispatch(ctx context.Context) {
 	m.mu.Lock()
 	for _, row := range rows {
 		if _, ok := m.workers[row.Name]; !ok {
-			m.spawnLocked(ctx, row.Name)
+			m.spawn(ctx, row.Name)
 		}
 	}
 	workers := make([]*worker, 0, len(m.workers))
@@ -123,7 +123,7 @@ func (m *Manager) dispatch(ctx context.Context) {
 }
 
 // spawnLocked starts a worker goroutine for name. Caller holds m.mu.
-func (m *Manager) spawnLocked(ctx context.Context, name string) {
+func (m *Manager) spawn(ctx context.Context, name string) {
 	wctx, cancel := context.WithCancel(ctx)
 	w := &worker{
 		name:   name,
