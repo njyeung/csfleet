@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -109,15 +108,14 @@ func killOrphans(ctx context.Context, cli *client.Client) {
 	}
 }
 
+// repoRoot is the working directory the binary runs from (the repo root),
+// overridable with CSFLEET_ROOT.
 func repoRoot() string {
-	if env := os.Getenv("CSFLEET_ROOT"); env != "" {
-		return env
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("cannot resolve working directory (set CSFLEET_ROOT): %v", err)
 	}
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		log.Fatal("cannot resolve source location (set CSFLEET_ROOT)")
-	}
-	return filepath.Dir(filepath.Dir(file))
+	return wd
 }
 
 func main() {
