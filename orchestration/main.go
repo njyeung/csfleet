@@ -190,6 +190,10 @@ func main() {
 		AdminUser:     cfg.AdminUser,
 		AdminPassHash: adminHash,
 		JWTSecret:     cfg.JWTSecret,
+		TLSDomains:    cfg.TLSDomains,
+		TLSCacheDir:   cfg.TLSCacheDir,
+		TLSEmail:      cfg.TLSEmail,
+		HTTPAddr:      cfg.HTTPAddr,
 	}, store, mgr)
 
 	// runCtx cancels on the first SIGINT/SIGTERM; the long-running services derive

@@ -16,18 +16,26 @@ import (
 
 	"csfleet/orchestrator/database"
 	"csfleet/orchestrator/fleet"
+
+	"golang.org/x/crypto/acme/autocert"
 )
 
 const maxBodyBytes = 1 << 20 // 1 MiB cap on request bodies
 
 // Config is the API's runtime configuration.
 type Config struct {
-	Addr          string // listen address
+	Addr          string // primary listen address (HTTPS when TLSDomains is set, else plain HTTP)
 	IPPrefix      string // /24 host prefix for auto-allocating server IPs, e.g. "172.30.0."
 	StaticDir     string // built SPA dir served as the catch-all; "" disables static serving
 	AdminUser     string // seed admin username; lives in memory, not the DB
 	AdminPassHash string // bcrypt hash of the seed admin password
 	JWTSecret     string // seeded from .env
+
+	// TLS via autocert (Let's Encrypt). TLS is enabled iff TLSDomains is non-empty.
+	TLSDomains  []string // hostnames certs are issued for (ACME HostWhitelist)
+	TLSCacheDir string   // directory autocert caches certs/keys in
+	TLSEmail    string   // optional ACME account contact email
+	HTTPAddr    string   // plain-HTTP listener for the ACME HTTP-01 challenge + HTTPS redirect
 }
 
 // Server is the HTTP control plane. It holds the Store it writes intent to and
@@ -38,6 +46,12 @@ type Server struct {
 	mgr   *fleet.Manager
 	hub   *sseHub
 	http  *http.Server
+
+	// acme/acmeHTTP are set only when TLS is enabled: acme issues/renews certs and
+	// acmeHTTP is the :80 listener that answers ACME HTTP-01 challenges and
+	// redirects everything else to HTTPS.
+	acme     *autocert.Manager
+	acmeHTTP *http.Server
 }
 
 func New(cfg Config, store *database.Store, mgr *fleet.Manager) *Server {
@@ -45,7 +59,25 @@ func New(cfg Config, store *database.Store, mgr *fleet.Manager) *Server {
 
 	mux := http.NewServeMux()
 	s.routes(mux)
-	s.http = &http.Server{Addr: cfg.Addr, Handler: s.gate(mux)}
+	handler := s.gate(mux)
+
+	// HTTPS
+	if len(cfg.TLSDomains) > 0 {
+		s.acme = &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(cfg.TLSDomains...),
+			Cache:      autocert.DirCache(cfg.TLSCacheDir),
+			Email:      cfg.TLSEmail,
+		}
+		s.http = &http.Server{Addr: cfg.Addr, Handler: handler, TLSConfig: s.acme.TLSConfig()}
+
+		// HTTPHandler(nil) serves /.well-known/acme-challenge/* and 301s the rest
+		// to HTTPS. ACME HTTP-01 requires this to be reachable on port 80.
+		s.acmeHTTP = &http.Server{Addr: cfg.HTTPAddr, Handler: s.acme.HTTPHandler(nil)}
+
+	} else { // HTTP (no domain)
+		s.http = &http.Server{Addr: cfg.Addr, Handler: handler}
+	}
 	return s
 }
 
@@ -77,10 +109,31 @@ func (s *Server) Run(ctx context.Context) error {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if s.acmeHTTP != nil {
+			if err := s.acmeHTTP.Shutdown(shutCtx); err != nil {
+				log.Printf("[api] acme http shutdown: %v", err)
+			}
+		}
 		if err := s.http.Shutdown(shutCtx); err != nil {
 			log.Printf("[api] shutdown: %v", err)
 		}
 	}()
+
+	// With TLS on, run the :80 ACME/redirect listener alongside the TLS server and
+	// serve certs out of autocert via TLSConfig (so the cert/key args stay empty).
+	if s.acme != nil {
+		go func() {
+			log.Printf("[api] acme http listening on %s", s.acmeHTTP.Addr)
+			if err := s.acmeHTTP.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("[api] acme http: %v", err)
+			}
+		}()
+		log.Printf("[api] listening on %s (tls: %s)", s.cfg.Addr, strings.Join(s.cfg.TLSDomains, ", "))
+		if err := s.http.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 
 	log.Printf("[api] listening on %s", s.cfg.Addr)
 	if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

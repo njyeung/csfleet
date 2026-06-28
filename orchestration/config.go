@@ -56,26 +56,44 @@ type Config struct {
 	DBUser     string
 	DBPass     string
 	DBRootPass string
-	APIAddr    string // HTTP control-plane listen address
+	APIAddr    string // primary control-plane listen address (HTTPS when TLS is on)
+	HTTPAddr   string // plain-HTTP listener for the ACME challenge + HTTPS redirect
 
 	AdminUser string // ADMIN_USER
 	AdminPass string // ADMIN_PASS
 	JWTSecret string // JWT_SECRET: HS256 signing key
+
+	TLSDomains  []string // TLS_DOMAINS: hostnames autocert issues certs for; empty disables TLS
+	TLSCacheDir string   // TLS_CACHE_DIR: where autocert caches certs
+	TLSEmail    string   // TLS_EMAIL: optional ACME account contact
 }
 
 func configFromEnv() Config {
 	port, _ := strconv.Atoi(envOr("DB_PORT", "3306"))
+
+	// TLS is on when TLS_DOMAINS is set,
+	// the primary listener then defaults to :443.
+	tlsDomains := splitList(os.Getenv("TLS_DOMAINS"))
+	apiDefault := ":80"
+	if len(tlsDomains) > 0 {
+		apiDefault = ":443"
+	}
+
 	cfg := Config{
-		DBHost:     envOr("DB_HOST", mariaIP),
-		DBPort:     port,
-		DBName:     envOr("DB_NAME", "csfleet"),
-		DBUser:     envOr("DB_USER", "csfleet"),
-		DBPass:     envOr("DB_PASS", "csfleet"),
-		DBRootPass: envOr("DB_ROOT_PASS", "csfleet"),
-		APIAddr:    envOr("API_ADDR", ":80"),
-		AdminUser:  strings.ToLower(envOr("ADMIN_USER", "admin")),
-		AdminPass:  os.Getenv("ADMIN_PASS"),
-		JWTSecret:  os.Getenv("JWT_SECRET"),
+		DBHost:      envOr("DB_HOST", "172.30.0.2"),
+		DBPort:      port,
+		DBName:      envOr("DB_NAME", "csfleet"),
+		DBUser:      envOr("DB_USER", "csfleet"),
+		DBPass:      envOr("DB_PASS", "csfleet"),
+		DBRootPass:  envOr("DB_ROOT_PASS", "csfleet"),
+		APIAddr:     envOr("API_ADDR", apiDefault),
+		HTTPAddr:    ":80",
+		AdminUser:   strings.ToLower(envOr("ADMIN_USER", "admin")),
+		AdminPass:   os.Getenv("ADMIN_PASS"),
+		JWTSecret:   os.Getenv("JWT_SECRET"),
+		TLSDomains:  tlsDomains,
+		TLSCacheDir: envOr("TLS_CACHE_DIR", "/var/lib/csfleet/autocert"),
+		TLSEmail:    os.Getenv("TLS_EMAIL"),
 	}
 
 	if cfg.AdminPass == "" {
@@ -94,6 +112,17 @@ func randomSecret() string {
 		log.Fatalf("[config] generate JWT secret: %v", err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// splitList parses a comma-separated env value into a trimmed, non-empty slice.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envOr(key, fallback string) string {
