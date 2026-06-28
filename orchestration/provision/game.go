@@ -3,8 +3,11 @@ package provision
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
+	"syscall"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -16,7 +19,41 @@ const (
 	steamAppID = "730"
 	cs2Image   = "joedwards32/cs2:latest"
 	steamInfoURL = "https://api.steamcmd.net/v1/info/" + steamAppID
+	// steamUID is the uid/gid the joedwards32/cs2 image runs as (the
+	// unprivileged "steam" user). The SteamCMD and server-instance containers
+	// both run as this user, so base/ must be writable by it.
+	steamUID = 1000
 )
+
+// ensureBaseOwnership makes base/ writable by the in-container steam user.
+//
+// On native Linux a bind mount passes host UIDs straight through. If the
+// orchestrator runs as root, base/ is root-owned and the steam-user (uid 1000)
+// SteamCMD container gets EACCES on every write — it logs those errors out of
+// view and still prints "Success!", leaving base/ empty. (It only works on a
+// dev box when the login user happens to be uid 1000, matching steam.)
+//
+// chown needs root, which is exactly the case that's broken; when the
+// orchestrator already runs as a non-root user we assume ownership is fine and
+// leave it alone. The top-level check skips the recursive walk once base/ is
+// already steam-owned (the steady state after a successful provision).
+func ensureBaseOwnership(base string) error {
+	if os.Geteuid() != steamUID && os.Geteuid() != 0 {
+		return nil
+	}
+	if fi, err := os.Stat(base); err != nil {
+		return err
+	} else if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid == steamUID && st.Gid == steamUID {
+		return nil
+	}
+	logf("chowning %s to steam (uid %d) so the SteamCMD container can write", base, steamUID)
+	return filepath.WalkDir(base, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Lchown(path, steamUID, steamUID)
+	})
+}
 
 func ensureGame(ctx context.Context, cli *client.Client, p paths, rec receipt) (gameReceipt, error) {
 	installed, present := currentBuildID(p)
@@ -86,6 +123,7 @@ bash "${STEAMCMDDIR}/steamcmd.sh" \
 `
 	if err := runEphemeral(ctx, cli, &container.Config{
 		Image:      cs2Image,
+		User:       fmt.Sprintf("%d:%d", steamUID, steamUID),
 		Entrypoint: []string{"bash"},
 		Cmd:        []string{"-c", script},
 	}, &container.HostConfig{

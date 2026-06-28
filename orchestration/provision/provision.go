@@ -22,6 +22,9 @@ func Run(ctx context.Context, root string, cli *client.Client) error {
 	if err := os.MkdirAll(p.base, 0o755); err != nil {
 		return err
 	}
+	if err := ensureBaseOwnership(p.base); err != nil {
+		return fmt.Errorf("base ownership: %w", err)
+	}
 
 	logf("provisioning shared base at %s", p.base)
 
