@@ -72,7 +72,7 @@ func configFromEnv() Config {
 		DBUser:     envOr("DB_USER", "csfleet"),
 		DBPass:     envOr("DB_PASS", "csfleet"),
 		DBRootPass: envOr("DB_ROOT_PASS", "csfleet"),
-		APIAddr:    envOr("API_ADDR", ":8080"),
+		APIAddr:    envOr("API_ADDR", ":80"),
 		AdminUser:  strings.ToLower(envOr("ADMIN_USER", "admin")),
 		AdminPass:  os.Getenv("ADMIN_PASS"),
 		JWTSecret:  os.Getenv("JWT_SECRET"),

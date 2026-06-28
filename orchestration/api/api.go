@@ -22,9 +22,9 @@ const maxBodyBytes = 1 << 20 // 1 MiB cap on request bodies
 
 // Config is the API's runtime configuration.
 type Config struct {
-	Addr      string // listen address, e.g. ":8080"
-	IPPrefix  string // /24 host prefix for auto-allocating server IPs, e.g. "172.30.0."
-	StaticDir string // built SPA dir served as the catch-all; "" disables static serving
+	Addr          string // listen address
+	IPPrefix      string // /24 host prefix for auto-allocating server IPs, e.g. "172.30.0."
+	StaticDir     string // built SPA dir served as the catch-all; "" disables static serving
 	AdminUser     string // seed admin username; lives in memory, not the DB
 	AdminPassHash string // bcrypt hash of the seed admin password
 	JWTSecret     string // seeded from .env

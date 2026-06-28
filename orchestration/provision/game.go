@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	steamAppID = "730"
-	cs2Image   = "joedwards32/cs2:latest"
+	steamAppID   = "730"
+	cs2Image     = "joedwards32/cs2:latest"
 	steamInfoURL = "https://api.steamcmd.net/v1/info/" + steamAppID
 	// steamUID is the uid/gid the joedwards32/cs2 image runs as (the
 	// unprivileged "steam" user). The SteamCMD and server-instance containers
@@ -27,11 +27,8 @@ const (
 
 // ensureBaseOwnership makes base/ writable by the in-container steam user.
 //
-// On native Linux a bind mount passes host UIDs straight through. If the
-// orchestrator runs as root, base/ is root-owned and the steam-user (uid 1000)
-// SteamCMD container gets EACCES on every write — it logs those errors out of
-// view and still prints "Success!", leaving base/ empty. (It only works on a
-// dev box when the login user happens to be uid 1000, matching steam.)
+// If the orchestrator runs as root (common on servers), base/ is root-owned and
+// the steam-user (uid 1000) SteamCMD container gets EACCES on every write.
 //
 // chown needs root, which is exactly the case that's broken; when the
 // orchestrator already runs as a non-root user we assume ownership is fine and

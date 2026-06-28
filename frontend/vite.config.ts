@@ -19,10 +19,10 @@ export default defineConfig({
 	server: {
 		// Forward /api (REST + the /api/events SSE stream) to the orchestrator so the
 		// browser talks same-origin and we avoid CORS. Point this at wherever the Go
-		// control plane listens (config.APIAddr, default :8080).
+		// control plane listens (config.APIAddr, default :80).
 		proxy: {
 			'/api': {
-				target: 'http://localhost:8080',
+				target: 'http://localhost:80',
 				changeOrigin: true
 			}
 		}
