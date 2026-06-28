@@ -65,11 +65,12 @@ type ManifestRow struct {
 
 type ConfigFileRow struct {
 	Name      string
+	Filename  string
 	Content   string
 	UpdatedAt time.Time
 }
 
-// EnvVarRow is one row of env_variables. scope is global|cluster|server and
+// EnvVarRow is one row of csfleet_env_variables. scope is global|cluster|server and
 // scope_name is ” for global, otherwise the cluster or server name.
 type EnvVarRow struct {
 	Key       string
@@ -90,4 +91,10 @@ type ScopedPlugin struct {
 type ScopedConfig struct {
 	Overridden bool
 	Items      []string
+}
+
+// User is a web UI account. The bcrypt hash never leaves the DB layer.
+type User struct {
+	Username  string
+	CreatedAt time.Time
 }

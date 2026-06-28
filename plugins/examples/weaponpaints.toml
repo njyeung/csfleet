@@ -1,28 +1,20 @@
-# WeaponPaints — skins/knives/gloves/agents, backed by MariaDB.
-#
-# Shape E: the archive has no single root. A `WeaponPaints/` plugin folder (with
-# its own data/gamedata/lang inside) sits next to a sibling top-level `gamedata/`,
-# and the two go to different places.
-name     = "WeaponPaints"
 requires = ["AnyBaseLib", "PlayerSettings", "MenuManager"]
 
-# WeaponPaints ships Windows-only native libs under runtimes/win — drop them.
 ignore = ["**/runtimes/win/**", "__MACOSX/**"]
 
 [source]
-type  = "github_release"
-repo  = "Nereziel/cs2-WeaponPaints"
+type = "github_release"
+repo = "Nereziel/cs2-WeaponPaints"
 asset = '^WeaponPaints\.zip$'
-# version = "build-423"   # pin a tag; defaults to latest
+# version = "build-423" # pin a tag, but it defaults to the latest
 
 [[layout]]
-from = "WeaponPaints"          # the plugin folder itself
-to   = "addons/counterstrikesharp/plugins/WeaponPaints"
+from = "WeaponPaints" # the plugin folder itself
+to = "addons/counterstrikesharp/plugins/WeaponPaints"
 
 [[layout]]
-from = "gamedata"              # the sibling, shared, top-level gamedata
-to   = "addons/counterstrikesharp/gamedata"
-
+from = "gamedata"
+to = "addons/counterstrikesharp/gamedata"
 
 [[template]]
 path = "addons/counterstrikesharp/configs/plugins/WeaponPaints/WeaponPaints.json"

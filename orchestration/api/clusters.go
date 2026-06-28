@@ -40,6 +40,7 @@ func (s *Server) createCluster(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error()) // unique port / bad name
 		return
 	}
+	s.hub.notify() // no worker moves on cluster create, so push the new cluster ourselves
 	created, err := s.store.GetCluster(req.Name)
 	if err != nil {
 		dbErr(w, err)
@@ -72,7 +73,8 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err.Error()) // port collision → client error
 		return
 	}
-	s.mgr.Nudge() // a changed port/lb policy makes members rebind on reconcile
+	s.mgr.Nudge()  // a changed port/lb policy makes members rebind on reconcile
+	s.hub.notify() // and reflect the edited cluster in the stream even if no member moves
 
 	updated, err := s.store.GetCluster(name)
 	if err != nil {
@@ -84,10 +86,11 @@ func (s *Server) updateCluster(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteCluster(r.PathValue("name")); err != nil {
-		// servers.cluster FK blocks deletion while members exist
+		// csfleet_servers.cluster FK blocks deletion while members exist
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
+	s.hub.notify() // drop the removed cluster from the stream
 	w.WriteHeader(http.StatusNoContent)
 }
 

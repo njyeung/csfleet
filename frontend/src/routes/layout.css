@@ -1,0 +1,21 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/forms';
+
+@theme {
+	--font-sans:
+		'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+		'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/* Dark, neutral "VSCode dark" weight. State colors
+   (green/amber/red) are the only non-gray accents and are applied per-component. */
+:root {
+	color-scheme: dark;
+}
+
+html,
+body {
+	height: 100%;
+	background-color: var(--color-neutral-900);
+	color: var(--color-neutral-300);
+}

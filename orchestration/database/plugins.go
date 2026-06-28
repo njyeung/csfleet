@@ -68,12 +68,12 @@ func (s *Store) EffectivePlugins(server, cluster string) ([]string, error) {
 }
 
 // scopedPlugins reads the plugin set stored at one scope. A marker row in
-// plugin_overrides means the scope overrides, so its plugin_assignments are read;
+// csfleet_plugin_overrides means the scope overrides, so its csfleet_plugin_assignments are read;
 // no marker means the scope inherits its parent.
 func (s *Store) scopedPlugins(scope, scopeName string) (ScopedPlugin, error) {
 	var marker int
 	switch err := s.DB.QueryRow(
-		"SELECT 1 FROM plugin_overrides WHERE scope = ? AND scope_name = ?",
+		"SELECT 1 FROM csfleet_plugin_overrides WHERE scope = ? AND scope_name = ?",
 		scope, scopeName).Scan(&marker); err {
 	case sql.ErrNoRows:
 		return ScopedPlugin{}, nil // no marker: inherit
@@ -84,7 +84,7 @@ func (s *Store) scopedPlugins(scope, scopeName string) (ScopedPlugin, error) {
 	}
 
 	rows, err := s.DB.Query(
-		"SELECT plugin FROM plugin_assignments WHERE scope = ? AND scope_name = ? ORDER BY plugin",
+		"SELECT plugin FROM csfleet_plugin_assignments WHERE scope = ? AND scope_name = ? ORDER BY plugin",
 		scope, scopeName)
 	if err != nil {
 		return ScopedPlugin{}, fmt.Errorf("read plugins: %w", err)
@@ -117,18 +117,18 @@ func (s *Store) setScopedPlugins(scope, scopeName string, plugins []string) erro
 // CreateCluster transactions so a created resource's plugins land atomically.
 func setPluginsTx(tx *sql.Tx, scope, scopeName string, plugins []string) error {
 	if _, err := tx.Exec(
-		"INSERT IGNORE INTO plugin_overrides (scope, scope_name) VALUES (?, ?)",
+		"INSERT IGNORE INTO csfleet_plugin_overrides (scope, scope_name) VALUES (?, ?)",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("mark plugin override: %w", err)
 	}
 	if _, err := tx.Exec(
-		"DELETE FROM plugin_assignments WHERE scope = ? AND scope_name = ?",
+		"DELETE FROM csfleet_plugin_assignments WHERE scope = ? AND scope_name = ?",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("clear plugins: %w", err)
 	}
 	for _, p := range plugins {
 		if _, err := tx.Exec(
-			"INSERT INTO plugin_assignments (plugin, scope, scope_name) VALUES (?, ?, ?)",
+			"INSERT INTO csfleet_plugin_assignments (plugin, scope, scope_name) VALUES (?, ?, ?)",
 			p, scope, scopeName); err != nil {
 			return fmt.Errorf("assign plugin %q: %w", p, err)
 		}
@@ -146,12 +146,12 @@ func (s *Store) clearScopedPlugins(scope, scopeName string) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		"DELETE FROM plugin_overrides WHERE scope = ? AND scope_name = ?",
+		"DELETE FROM csfleet_plugin_overrides WHERE scope = ? AND scope_name = ?",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("clear plugin override: %w", err)
 	}
 	if _, err := tx.Exec(
-		"DELETE FROM plugin_assignments WHERE scope = ? AND scope_name = ?",
+		"DELETE FROM csfleet_plugin_assignments WHERE scope = ? AND scope_name = ?",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("clear plugins: %w", err)
 	}

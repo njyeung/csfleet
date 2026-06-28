@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"csfleet/orchestrator/database"
@@ -21,8 +22,12 @@ const maxBodyBytes = 1 << 20 // 1 MiB cap on request bodies
 
 // Config is the API's runtime configuration.
 type Config struct {
-	Addr     string // listen address, e.g. ":8080"
-	IPPrefix string // /24 host prefix for auto-allocating server IPs, e.g. "172.30.0."
+	Addr      string // listen address, e.g. ":8080"
+	IPPrefix  string // /24 host prefix for auto-allocating server IPs, e.g. "172.30.0."
+	StaticDir string // built SPA dir served as the catch-all; "" disables static serving
+	AdminUser     string // seed admin username; lives in memory, not the DB
+	AdminPassHash string // bcrypt hash of the seed admin password
+	JWTSecret     string // seeded from .env
 }
 
 // Server is the HTTP control plane. It holds the Store it writes intent to and
@@ -40,14 +45,33 @@ func New(cfg Config, store *database.Store, mgr *fleet.Manager) *Server {
 
 	mux := http.NewServeMux()
 	s.routes(mux)
-	s.http = &http.Server{Addr: cfg.Addr, Handler: mux}
+	s.http = &http.Server{Addr: cfg.Addr, Handler: s.gate(mux)}
 	return s
+}
+
+// gate fronts the mux with auth. Login/logout must be reachable while logged out
+// and the static SPA (login page + assets) stays public; every other /api/* route
+// requires a valid session. This keeps the routes() handlers themselves untouched.
+func (s *Server) gate(mux *http.ServeMux) http.Handler {
+	authed := s.requireAuth(mux.ServeHTTP)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case p == "/api/auth/login" || p == "/api/auth/logout":
+			mux.ServeHTTP(w, r)
+		case strings.HasPrefix(p, "/api/"):
+			authed(w, r)
+		default:
+			mux.ServeHTTP(w, r)
+		}
+	})
 }
 
 // Run starts the SSE fan-out and the HTTP server, blocking until ctx is
 // cancelled, then drains in-flight requests. Mirrors fleet.Manager.Run.
 func (s *Server) Run(ctx context.Context) error {
-	go s.hub.run(ctx, s.mgr.Changes(), s.snapshot)
+	go s.hub.run(ctx, s.mgr.Changes(), s.fleetSnapshot)
+	go sampleHostStats(ctx, s.broadcastHost)
 
 	go func() {
 		<-ctx.Done()
@@ -68,6 +92,20 @@ func (s *Server) Run(ctx context.Context) error {
 // routes wires the HTTP surface. Go 1.22+ method+pattern routing; {name...}
 // captures config paths that contain slashes (e.g. "cfg/server.cfg").
 func (s *Server) routes(mux *http.ServeMux) {
+	// Auth: login/logout are public (see gate); me requires a session.
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("GET /api/auth/me", s.me)
+
+	// User management (every authenticated user can manage accounts)
+	mux.HandleFunc("GET /api/users", s.listUsers)
+	mux.HandleFunc("POST /api/users", s.createUser)
+	mux.HandleFunc("DELETE /api/users/{username}", s.deleteUser)
+	mux.HandleFunc("PUT /api/users/{username}/password", s.setUserPassword)
+
+	// Machine
+	mux.HandleFunc("GET /api/orchestratorinfo", s.getOrchestratorInfo)
+
 	// Servers
 	mux.HandleFunc("GET /api/servers", s.listServers)
 	mux.HandleFunc("POST /api/servers", s.createServer)
@@ -123,6 +161,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// Live status stream
 	mux.HandleFunc("GET /api/events", s.handleSSE)
+
+	// Built SPA, served from the same listener as the API. Registered as the
+	// catch-all: the /api/* patterns above are more specific and always win, so
+	// this only handles non-API paths (and falls back to index.html for client
+	// routing). Sharing the listener means the UI can't come up before the API.
+	if s.cfg.StaticDir != "" {
+		mux.HandleFunc("GET /", spaFileServer(s.cfg.StaticDir))
+	}
 }
 
 // --- shared helpers ---

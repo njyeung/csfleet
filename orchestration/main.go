@@ -122,6 +122,7 @@ func repoRoot() string {
 
 func main() {
 	root := repoRoot()
+	loadDotenv(filepath.Join(root, ".env"))
 	cfg := configFromEnv()
 	ctx := context.Background()
 
@@ -172,7 +173,26 @@ func main() {
 	defer px.Stop()
 
 	mgr := fleet.New(store, px, cli, root)
-	apiSrv := api.New(api.Config{Addr: cfg.APIAddr, IPPrefix: hostIPPrefix}, store, mgr)
+
+	// Serve the built SPA from the same listener as the API.
+	staticDir := filepath.Join(root, "frontend", "build")
+	if _, err := os.Stat(staticDir); err != nil {
+		log.Printf("[orchestrator] SPA build not found at %s — serving API only (run `npm run build` in frontend/)", staticDir)
+		staticDir = ""
+	}
+	// Seed admin lives only in memory; only its bcrypt hash reaches the API.
+	adminHash, err := api.HashPassword(cfg.AdminPass)
+	if err != nil {
+		log.Fatalf("[orchestrator] hash admin password: %v", err)
+	}
+	apiSrv := api.New(api.Config{
+		Addr:          cfg.APIAddr,
+		IPPrefix:      hostIPPrefix,
+		StaticDir:     staticDir,
+		AdminUser:     cfg.AdminUser,
+		AdminPassHash: adminHash,
+		JWTSecret:     cfg.JWTSecret,
+	}, store, mgr)
 
 	// runCtx cancels on the first SIGINT/SIGTERM; the long-running services derive
 	// from it, while setup and the teardown defers above keep using the background

@@ -135,8 +135,14 @@ func (w *worker) reconcile() {
 	}
 
 	// desired == stopped
-	if ph == phaseRunning {
+	switch ph {
+	case phaseRunning, phaseStopping:
 		w.bringDown()
+	case phasePending, phaseCrashed:
+		// edge case where the server is started in a stopped state.
+		// There is nothing to do but to set the phase to stopped since it is already stopped.
+		w.setPhase(phaseStopped)
+		w.mgr.signalChange()
 	}
 }
 
@@ -209,7 +215,7 @@ func (w *worker) bringUp(eff database.EffectiveServer) {
 			w.fail(fmt.Sprintf("load config %q", name), err)
 			return
 		}
-		configs = append(configs, server.ConfigPayload{Name: cf.Name, Content: cf.Content})
+		configs = append(configs, server.ConfigPayload{Name: cf.Name, Filename: cf.Filename, Content: cf.Content})
 	}
 
 	def := server.Definition{Name: row.Name, Network: "csfleet", IP: row.IP, Env: env}

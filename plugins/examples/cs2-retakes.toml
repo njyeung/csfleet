@@ -1,11 +1,4 @@
-# cs2-retakes — retakes game mode. [reference only — not installed]
-#
-# Shape A (addons/counterstrikesharp/{plugins,shared}/). Two asset variants: the
-# full zip and `-no-map-configs`; pick per whether you want the bundled per-map
-# spawn configs.
-name = "RetakesPlugin"
-
 [source]
 type  = "github_release"
 repo  = "B3none/cs2-retakes"
-asset = '^RetakesPlugin-[0-9.]+\.zip$'   # full (with map configs)
+asset = '^RetakesPlugin-[0-9.]+\.zip$' # full (with map configs)

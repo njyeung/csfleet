@@ -6,10 +6,12 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/florianl/go-nfqueue v1.3.2
 	github.com/go-sql-driver/mysql v1.10.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/nftables v0.3.0
 	github.com/pelletier/go-toml/v2 v2.1.0
 	github.com/ti-mo/conntrack v0.6.0
-	golang.org/x/sys v0.45.0
+	golang.org/x/crypto v0.53.0
+	golang.org/x/sys v0.46.0
 )
 
 require (

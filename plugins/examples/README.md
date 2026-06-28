@@ -2,7 +2,9 @@
 
 Each `*.toml` here is an example **recipe** for one CounterStrikeSharp / Metamod plugin: Where to fetch it, how to lay its files into the shared `base/` install, what it depends on, and how to template its config (including database).
 
-Manifests are portable and written to the database via the GUI. Credentials are resolved by the orchestrator at runtime based on the env variables the user inserts to the database. The same environment variables are propogated into the container as well.
+Manifests are portable and written to the database via the GUI. A plugin's identity is its name, given during upload. That key is the primary key and is what other manifests' `requires` reference, so an entry in `requires` must match the key its dependency was uploaded under.
+
+Credentials are resolved by the orchestrator at runtime based on the env variables the user inserts to the database. The same environment variables are propogated into the container as well.
 
 The orchestrator reads the enabled plugins, resolves the dependency closure, fetches + lays everything into `base/game/csgo/`, and
 rebuilds the whole `addons/` tree atomically when any version drifts.
@@ -10,12 +12,10 @@ rebuilds the whole `addons/` tree atomically when any version drifts.
 ## Schema
 
 ### Top level
-- `name` (string, required) — unique package name. This is the primary key in the
-  `plugin_manifests` database table and is referenced by other manifests' `requires`.
-- `requires` (array of names, optional) — packages that must also be installed.
-  Used for closure ("enable WeaponPaints → pull its deps"). Load *order* is
-  resolved by CounterStrikeSharp at runtime, so this is about inclusion, not
-  install ordering.
+- `requires` (array of names, optional) — other packages that must also be
+  installed. Each name is a catalog key (see above). Used for closure ("enable
+  WeaponPaints → pull its deps"). Load *order* is resolved by CounterStrikeSharp
+  at runtime, so this is about inclusion, not install ordering.
 - `ignore` (array of globs, optional) — archive entries to drop (junk dirs,
   wrong-OS binaries). Matched against archive-relative paths.
 

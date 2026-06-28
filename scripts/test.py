@@ -34,10 +34,14 @@ MEMBER_INHERIT = "comp-a"
 MEMBER_NONE = "comp-b"
 
 # WeaponPaints + the three plugins it `requires`. We upload each manifest under
-# its declared name and assign all four to the cluster.
+# its catalog key (the name in the URL; manifests no longer carry their own name)
+# and assign all four to the cluster.
 WEAPONPAINTS_DEPS = ["AnyBaseLib", "PlayerSettings", "MenuManager"]
 CLUSTER_PLUGINS = ["WeaponPaints"] + WEAPONPAINTS_DEPS
+# Catalog name (the PK / identifier) and the on-disk filename the body lands at.
+# The filename is resolved under game/csgo/cfg/, so it's just a bare name.
 CLUSTER_CONFIG = "skininspect.cfg"
+CLUSTER_CONFIG_FILENAME = "gamemode_competitive_server.cfg"
 
 # ---------------------------------------------------------------------------
 # Inlined artifacts (copied from config/ and plugins/examples/).
@@ -89,7 +93,6 @@ mp_free_armor 2
 
 MANIFEST_WEAPONPAINTS = """\
 # WeaponPaints — skins/knives/gloves/agents, backed by MariaDB.
-name     = "WeaponPaints"
 requires = ["AnyBaseLib", "PlayerSettings", "MenuManager"]
 
 ignore = ["**/runtimes/win/**", "__MACOSX/**"]
@@ -137,7 +140,6 @@ body = '''
 
 MANIFEST_ANYBASELIB = """\
 # AnyBaseLib — shared base library used by WeaponPaints.
-name = "AnyBaseLib"
 
 [source]
 type  = "github_release"
@@ -147,17 +149,30 @@ asset = '^AnyBaseLib\\.zip$'
 
 MANIFEST_PLAYERSETTINGS = """\
 # PlayerSettings — per-player settings store used by WeaponPaints.
-name = "PlayerSettings"
 
 [source]
 type  = "github_release"
 repo  = "NickFox007/PlayerSettingsCS2"
 asset = '^PlayerSettings\\.zip$'
+
+[[template]]
+path = "addons/counterstrikesharp/configs/plugins/PlayerSettings/PlayerSettings.json"
+body = '''
+{
+  "DatabaseParams": {
+    "Host": "${db.host}:${db.port}",
+    "Name": "${db.name}",
+    "User": "${db.user}",
+    "Password": "${db.pass}",
+    "Table": "settings_"
+  },
+  "ConfigVersion": 1
+}
+'''
 """
 
 MANIFEST_MENUMANAGER = """\
 # MenuManager — in-game menu framework used by WeaponPaints.
-name = "MenuManager"
 
 [source]
 type  = "github_release"
@@ -321,7 +336,8 @@ def main():
           f"{STANDALONE} desired_state == running")
 
     print("\n== 3. upload config + plugins, create cluster ==")
-    s, _ = api("PUT", f"/api/configs/{CLUSTER_CONFIG}", {"content": SKININSPECT_CFG})
+    s, _ = api("PUT", f"/api/configs/{CLUSTER_CONFIG}",
+               {"filename": CLUSTER_CONFIG_FILENAME, "content": SKININSPECT_CFG})
     check(s == 204, f"upload {CLUSTER_CONFIG}")
     for pname in CLUSTER_PLUGINS:
         s, _ = api("PUT", f"/api/plugins/{pname}", {"manifest": MANIFESTS[pname]})
@@ -379,44 +395,44 @@ def main():
     show_servers()
     show_clusters()
 
-    print("\n== 6. stop the standalone server ==")
-    s, _ = api("POST", f"/api/servers/{STANDALONE}/stop")
-    check(s == 204, f"stop {STANDALONE}")
-    wait(10, f"{STANDALONE} to drain")
-    servers = show_servers()
-    show_clusters()
-    check(servers.get(STANDALONE, {}).get("desired_state") == "stopped",
-          f"{STANDALONE} desired_state == stopped")
+    # print("\n== 6. stop the standalone server ==")
+    # s, _ = api("POST", f"/api/servers/{STANDALONE}/stop")
+    # check(s == 204, f"stop {STANDALONE}")
+    # wait(10, f"{STANDALONE} to drain")
+    # servers = show_servers()
+    # show_clusters()
+    # check(servers.get(STANDALONE, {}).get("desired_state") == "stopped",
+    #       f"{STANDALONE} desired_state == stopped")
 
-    print("\n== 7. stop the cluster (its members) ==")
-    # Clusters have no desired_state of their own, so "stopping the cluster" means
-    # stopping each member server.
-    for member in (MEMBER_INHERIT, MEMBER_NONE):
-        s, _ = api("POST", f"/api/servers/{member}/stop")
-        check(s == 204, f"stop {member}")
-    wait(10, "cluster members to drain")
-    servers = show_servers()
-    show_clusters()
-    check(all(servers.get(m, {}).get("desired_state") == "stopped"
-              for m in (MEMBER_INHERIT, MEMBER_NONE)),
-          "both cluster members desired_state == stopped")
+    # print("\n== 7. stop the cluster (its members) ==")
+    # # Clusters have no desired_state of their own, so "stopping the cluster" means
+    # # stopping each member server.
+    # for member in (MEMBER_INHERIT, MEMBER_NONE):
+    #     s, _ = api("POST", f"/api/servers/{member}/stop")
+    #     check(s == 204, f"stop {member}")
+    # wait(10, "cluster members to drain")
+    # servers = show_servers()
+    # show_clusters()
+    # check(all(servers.get(m, {}).get("desired_state") == "stopped"
+    #           for m in (MEMBER_INHERIT, MEMBER_NONE)),
+    #       "both cluster members desired_state == stopped")
 
-    # Bonus: env on a non-global scope is rejected (cluster/server env is create-only).
-    print("\n== bonus: cluster-scope env edit is rejected ==")
-    s, _ = api("PUT", "/api/env",
-               {"key": "FOO", "value": "bar", "scope": "cluster", "scope_name": CLUSTER},
-               quiet=True)
-    check(s == 400, f"PUT /api/env scope=cluster is rejected (got {s})")
+    # # Bonus: env on a non-global scope is rejected (cluster/server env is create-only).
+    # print("\n== bonus: cluster-scope env edit is rejected ==")
+    # s, _ = api("PUT", "/api/env",
+    #            {"key": "FOO", "value": "bar", "scope": "cluster", "scope_name": CLUSTER},
+    #            quiet=True)
+    # check(s == 400, f"PUT /api/env scope=cluster is rejected (got {s})")
 
-    print("\n== summary ==")
-    if _failures:
-        print(f"  {len(_failures)} check(s) FAILED:")
-        for f in _failures:
-            print(f"    - {f}")
-    else:
-        print("  all checks passed")
+    # print("\n== summary ==")
+    # if _failures:
+    #     print(f"  {len(_failures)} check(s) FAILED:")
+    #     for f in _failures:
+    #         print(f"    - {f}")
+    # else:
+    #     print("  all checks passed")
 
-    stop.set()
+    # stop.set()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
 package database
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // ResolveServer collapses a server row and its cluster into the
 // EffectiveServer the fleet runs against.
@@ -45,7 +48,7 @@ func (s *Store) ResolveServer(name string) (EffectiveServer, error) {
 // The db.* keys seeded by seedDefaults are ordinary env vars injected into the container.
 func (s *Store) LoadEnv(server, cluster string) (map[string]string, error) {
 	rows, err := s.DB.Query(
-		"SELECT `key`, value FROM env_variables "+
+		"SELECT `key`, value FROM csfleet_env_variables "+
 			"WHERE scope = 'global' "+
 			"OR (scope = 'cluster' AND scope_name = ?) "+
 			"OR (scope = 'server' AND scope_name = ?) "+
@@ -66,6 +69,45 @@ func (s *Store) LoadEnv(server, cluster string) (map[string]string, error) {
 		env[k] = v // later (more specific) scope overwrites
 	}
 	return env, rows.Err()
+}
+
+// EffectiveEnv returns the env a server actually runs as one row per key, keeping
+// the scope that won each key (global < cluster < server, most specific wins).
+// Unlike LoadEnv, which collapses to a map for container injection, this preserves
+// the winning scope so a UI can show where each value came from. Rows are sorted
+// by key for stable output.
+func (s *Store) EffectiveEnv(server, cluster string) ([]EnvVarRow, error) {
+	rows, err := s.DB.Query(
+		"SELECT `key`, value, scope, scope_name FROM csfleet_env_variables "+
+			"WHERE scope = 'global' "+
+			"OR (scope = 'cluster' AND scope_name = ?) "+
+			"OR (scope = 'server' AND scope_name = ?) "+
+			"ORDER BY FIELD(scope, 'global', 'cluster', 'server')",
+		cluster, server,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("effective env: %w", err)
+	}
+	defer rows.Close()
+
+	winning := map[string]EnvVarRow{}
+	for rows.Next() {
+		var r EnvVarRow
+		if err := rows.Scan(&r.Key, &r.Value, &r.Scope, &r.ScopeName); err != nil {
+			return nil, fmt.Errorf("effective env: %w", err)
+		}
+		winning[r.Key] = r // later (more specific) scope overwrites
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]EnvVarRow, 0, len(winning))
+	for _, r := range winning {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
 }
 
 // resolveBool applies the override tier to a tri-state boolean: the server's own

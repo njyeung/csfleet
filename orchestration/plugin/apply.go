@@ -18,8 +18,11 @@ import (
 )
 
 // Manifest is a decoded plugin recipe. Fields mirror plugins/README.md.
+//
+// A manifest carries no name of its own: a plugin's identity is its catalog key
+// (the name it's stored under in csfleet_plugin_manifests, also what requires references).
+// The caller passes that key in for diagnostics.
 type Manifest struct {
-	Name     string         `toml:"name"`
 	Requires []string       `toml:"requires"`
 	Ignore   []string       `toml:"ignore"`
 	Source   Source         `toml:"source"`
@@ -59,38 +62,37 @@ func ParseManifest(tomlText string) (Manifest, error) {
 	if err := toml.Unmarshal([]byte(tomlText), &m); err != nil {
 		return m, fmt.Errorf("parse manifest: %w", err)
 	}
-	if m.Name == "" {
-		return m, fmt.Errorf("manifest has no name")
-	}
 	return m, nil
 }
 
 // Apply installs the plugin described by manifestTOML into the overlay whose
-// game/csgo/ is overlayCSGO.
-func Apply(overlayCSGO, manifestTOML string, env map[string]string) error {
+// game/csgo/ is overlayCSGO. name is the plugin's catalog key, used only for
+// diagnostics.
+func Apply(overlayCSGO, name, manifestTOML string, env map[string]string) error {
 	m, err := ParseManifest(manifestTOML)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", name, err)
 	}
-	return m.applyTo(overlayCSGO, env)
+	return m.applyTo(name, overlayCSGO, env)
 }
 
-// ApplyTo is Apply for an already-parsed manifest.
-func (m Manifest) applyTo(overlayCSGO string, env map[string]string) error {
+// applyTo is Apply for an already-parsed manifest. name is the catalog key for
+// diagnostics.
+func (m Manifest) applyTo(name, overlayCSGO string, env map[string]string) error {
 	root, cleanup, err := m.fetchSource()
 	if err != nil {
-		return fmt.Errorf("%s: source: %w", m.Name, err)
+		return fmt.Errorf("%s: source: %w", name, err)
 	}
 	defer cleanup()
 
 	if err := applyIgnore(root, m.Ignore); err != nil {
-		return fmt.Errorf("%s: ignore: %w", m.Name, err)
+		return fmt.Errorf("%s: ignore: %w", name, err)
 	}
 	if err := m.layout(root, overlayCSGO); err != nil {
-		return fmt.Errorf("%s: layout: %w", m.Name, err)
+		return fmt.Errorf("%s: layout: %w", name, err)
 	}
 	if err := m.templates(overlayCSGO, env); err != nil {
-		return fmt.Errorf("%s: template: %w", m.Name, err)
+		return fmt.Errorf("%s: template: %w", name, err)
 	}
 	return nil
 }

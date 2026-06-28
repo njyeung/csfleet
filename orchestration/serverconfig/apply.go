@@ -3,34 +3,34 @@
 // single server's overlay. Like plugin apply, this runs once per server
 // spin-up, after the overlay is mounted.
 //
-// A config file is a (name, content) tuple stored in the config_files DB
-// table. "name" is the game-relative path (e.g. "cfg/server.cfg") and
-// "content" is the raw file body. The orchestrator loads the tuple and passes
-// it here.
+// A config file is a (name, filename, content) tuple stored in the csfleet_config_files
+// DB table. "name" is the catalog identifier (the PK assignments reference);
+// "filename" is the file's path under game/csgo/cfg/ — usually just a bare name
+// like gamemode_competitive_server.cfg; "content" is the raw file body.
+//
+// A server may resolve to several configs. Each is written to its own filename,
+// so distinct filenames coexist. Two configs that resolve to the same filename
+// just overwrite in apply order. Last one wins.
+
 package serverconfig
 
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"csfleet/orchestrator/internal/install"
 )
 
-// Apply writes a single config file into the overlay. name is the
-// game-relative path (e.g. "cfg/server.cfg") doubling as the config's
-// identifier. It rejects paths that try to escape the overlay root.
-func Apply(overlayCSGO, name, content string) error {
-	if name == "" {
-		return fmt.Errorf("config file has no name")
+const cfgDir = "cfg"
+
+// Apply writes one config body into the overlay under game/csgo/cfg/, at the
+// config's filename. name is the config's catalog identifier, used only for
+// diagnostics.
+func Apply(overlayCSGO, name, filename, content string) error {
+	if filename == "" {
+		return fmt.Errorf("config file %q has no filename", name)
 	}
 
-	dest := filepath.Join(overlayCSGO, filepath.FromSlash(name))
-
-	rel, err := filepath.Rel(overlayCSGO, dest)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return fmt.Errorf("config path %q escapes overlay root", name)
-	}
-
+	dest := filepath.Join(overlayCSGO, cfgDir, filepath.FromSlash(filename))
 	return install.AtomicWrite(dest, []byte(content))
 }

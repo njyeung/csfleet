@@ -68,12 +68,12 @@ func (s *Store) EffectiveConfigs(server, cluster string) ([]string, error) {
 }
 
 // scopedConfigs reads the config set stored at one scope. A marker row in
-// config_overrides means the scope overrides, so its config_assignments are read;
+// csfleet_config_overrides means the scope overrides, so its csfleet_config_assignments are read;
 // no marker means the scope inherits its parent.
 func (s *Store) scopedConfigs(scope, scopeName string) (ScopedConfig, error) {
 	var marker int
 	switch err := s.DB.QueryRow(
-		"SELECT 1 FROM config_overrides WHERE scope = ? AND scope_name = ?",
+		"SELECT 1 FROM csfleet_config_overrides WHERE scope = ? AND scope_name = ?",
 		scope, scopeName).Scan(&marker); err {
 	case sql.ErrNoRows:
 		return ScopedConfig{}, nil // no marker: inherit
@@ -84,7 +84,7 @@ func (s *Store) scopedConfigs(scope, scopeName string) (ScopedConfig, error) {
 	}
 
 	rows, err := s.DB.Query(
-		"SELECT config FROM config_assignments WHERE scope = ? AND scope_name = ? ORDER BY config",
+		"SELECT config FROM csfleet_config_assignments WHERE scope = ? AND scope_name = ? ORDER BY config",
 		scope, scopeName)
 	if err != nil {
 		return ScopedConfig{}, fmt.Errorf("read configs: %w", err)
@@ -117,18 +117,18 @@ func (s *Store) setScopedConfigs(scope, scopeName string, configs []string) erro
 // CreateCluster transactions so a created resource's configs land atomically.
 func setConfigsTx(tx *sql.Tx, scope, scopeName string, configs []string) error {
 	if _, err := tx.Exec(
-		"INSERT IGNORE INTO config_overrides (scope, scope_name) VALUES (?, ?)",
+		"INSERT IGNORE INTO csfleet_config_overrides (scope, scope_name) VALUES (?, ?)",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("mark config override: %w", err)
 	}
 	if _, err := tx.Exec(
-		"DELETE FROM config_assignments WHERE scope = ? AND scope_name = ?",
+		"DELETE FROM csfleet_config_assignments WHERE scope = ? AND scope_name = ?",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("clear configs: %w", err)
 	}
 	for _, c := range configs {
 		if _, err := tx.Exec(
-			"INSERT INTO config_assignments (config, scope, scope_name) VALUES (?, ?, ?)",
+			"INSERT INTO csfleet_config_assignments (config, scope, scope_name) VALUES (?, ?, ?)",
 			c, scope, scopeName); err != nil {
 			return fmt.Errorf("assign config %q: %w", c, err)
 		}
@@ -146,12 +146,12 @@ func (s *Store) clearScopedConfigs(scope, scopeName string) error {
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		"DELETE FROM config_overrides WHERE scope = ? AND scope_name = ?",
+		"DELETE FROM csfleet_config_overrides WHERE scope = ? AND scope_name = ?",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("clear config override: %w", err)
 	}
 	if _, err := tx.Exec(
-		"DELETE FROM config_assignments WHERE scope = ? AND scope_name = ?",
+		"DELETE FROM csfleet_config_assignments WHERE scope = ? AND scope_name = ?",
 		scope, scopeName); err != nil {
 		return fmt.Errorf("clear configs: %w", err)
 	}

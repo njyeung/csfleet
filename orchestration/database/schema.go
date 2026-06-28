@@ -196,19 +196,24 @@ func openDB(cfg Config) (*sql.DB, error) {
 
 func (s *Store) migrate() error {
 	_, err := s.DB.Exec(`
-		CREATE TABLE IF NOT EXISTS plugin_manifests (
+		CREATE TABLE IF NOT EXISTS csfleet_plugin_manifests (
 			name       VARCHAR(255) NOT NULL PRIMARY KEY,
 			manifest   MEDIUMTEXT   NOT NULL,
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS config_files (
+		-- name is the catalog identifier (the PK assignments reference); filename is
+		-- the file's path under game/csgo/cfg/, usually a bare name
+		-- (e.g. gamemode_competitive_server.cfg).
+
+		CREATE TABLE IF NOT EXISTS csfleet_config_files (
 			name       VARCHAR(255) NOT NULL PRIMARY KEY,
+			filename   VARCHAR(255) NOT NULL,
 			content    MEDIUMTEXT   NOT NULL,
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS gslt_tokens (
+		CREATE TABLE IF NOT EXISTS csfleet_gslt_tokens (
 			token      VARCHAR(255) NOT NULL PRIMARY KEY,
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
@@ -217,7 +222,7 @@ func (s *Store) migrate() error {
 		-- single external ingress every member sits behind); auto_token,
 		-- accepting_connections and restart/stop are the inheritable override-tier
 		-- defaults; lb_policy is how the proxy spreads new sessions across members.
-		CREATE TABLE IF NOT EXISTS clusters (
+		CREATE TABLE IF NOT EXISTS csfleet_clusters (
 			name                  VARCHAR(255) NOT NULL PRIMARY KEY,
 			port                  INT          NOT NULL UNIQUE,
 			auto_token            BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -237,7 +242,7 @@ func (s *Store) migrate() error {
 		-- For the hour fields a value < 0 means "no limit" (distinct from NULL), so a
 		-- server can opt out of a cluster cadence. The hour fields default to -1 (no
 		-- limit) so a fresh server never silently inherits a restart/stop.
-		CREATE TABLE IF NOT EXISTS servers (
+		CREATE TABLE IF NOT EXISTS csfleet_servers (
 			name                  VARCHAR(255) NOT NULL PRIMARY KEY,
 			ip                    VARCHAR(45)  NOT NULL UNIQUE,
 			port                  INT          UNIQUE,
@@ -249,14 +254,14 @@ func (s *Store) migrate() error {
 			desired_state         ENUM('running','stopped') NOT NULL DEFAULT 'running',
 			updated_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			CONSTRAINT server_reachable CHECK ((cluster IS NULL) <> (port IS NULL)),
-			FOREIGN KEY (cluster) REFERENCES clusters(name)
+			FOREIGN KEY (cluster) REFERENCES csfleet_clusters(name)
 		);
 
 		-- scope is global|cluster|server; scope_name is '' for global, else the
 		-- cluster or server name. A server resolves global < cluster < server
 		
 
-		CREATE TABLE IF NOT EXISTS env_variables (
+		CREATE TABLE IF NOT EXISTS csfleet_env_variables (
 ` + "			`key`" + `      VARCHAR(255) NOT NULL,
 			value      TEXT         NOT NULL,
 			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'global',
@@ -264,38 +269,47 @@ func (s *Store) migrate() error {
 ` + "			PRIMARY KEY (`key`, scope, scope_name)" + `
 		);
 
-		CREATE TABLE IF NOT EXISTS plugin_assignments (
+		CREATE TABLE IF NOT EXISTS csfleet_plugin_assignments (
 			plugin     VARCHAR(255) NOT NULL,
 			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'server',
 			scope_name VARCHAR(255) NOT NULL DEFAULT '',
 			PRIMARY KEY (plugin, scope, scope_name),
-			FOREIGN KEY (plugin) REFERENCES plugin_manifests(name)
+			FOREIGN KEY (plugin) REFERENCES csfleet_plugin_manifests(name)
 		);
 
 		-- Marks a scope that holds an explicit plugin set. Presence means "this
-		-- scope overrides" even with 0 rows in plugin_assignments above. Absence
+		-- scope overrides" even with 0 rows in csfleet_plugin_assignments above. Absence
 		-- means inherit from the parent scope (server < cluster < global).
 
-		CREATE TABLE IF NOT EXISTS plugin_overrides (
+		CREATE TABLE IF NOT EXISTS csfleet_plugin_overrides (
 			scope      ENUM('global','cluster','server') NOT NULL,
 			scope_name VARCHAR(255) NOT NULL DEFAULT '',
 			PRIMARY KEY (scope, scope_name)
 		);
 
-		CREATE TABLE IF NOT EXISTS config_assignments (
+		CREATE TABLE IF NOT EXISTS csfleet_config_assignments (
 			config     VARCHAR(255) NOT NULL,
 			scope      ENUM('global','cluster','server') NOT NULL DEFAULT 'server',
 			scope_name VARCHAR(255) NOT NULL DEFAULT '',
 			PRIMARY KEY (config, scope, scope_name),
-			FOREIGN KEY (config) REFERENCES config_files(name)
+			FOREIGN KEY (config) REFERENCES csfleet_config_files(name)
 		);
 
-		-- Same as plugin_overrides, for config_assignments
-		
-		CREATE TABLE IF NOT EXISTS config_overrides (
+		-- Same as csfleet_plugin_overrides, for csfleet_config_assignments
+
+		CREATE TABLE IF NOT EXISTS csfleet_config_overrides (
 			scope      ENUM('global','cluster','server') NOT NULL,
 			scope_name VARCHAR(255) NOT NULL DEFAULT '',
 			PRIMARY KEY (scope, scope_name)
+		);
+
+		-- Web UI accounts. The seed admin (ADMIN_USER) is reconciled here on every
+		-- boot from .env; all other rows are managed through the UI. bcrypt hashes only.
+		CREATE TABLE IF NOT EXISTS csfleet_web_users (
+			username   VARCHAR(255) NOT NULL PRIMARY KEY,
+			pass_hash  VARCHAR(255) NOT NULL,
+			created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
@@ -304,8 +318,8 @@ func (s *Store) migrate() error {
 	return s.ensurePortTriggers()
 }
 
-// ensurePortTriggers keeps the external host ports in servers.port and
-// clusters.port from colliding.
+// ensurePortTriggers keeps the external host ports in csfleet_servers.port and
+// csfleet_clusters.port from colliding.
 //
 // UNIQUE already guards each column on its own;
 // these cover the cross-table case.
@@ -319,10 +333,10 @@ func (s *Store) ensurePortTriggers() error {
 			END`, name, event, other, msg)
 	}
 	triggers := []string{
-		add("servers_port_insert", "BEFORE INSERT ON servers", "clusters", "server port collides with a cluster port"),
-		add("servers_port_update", "BEFORE UPDATE ON servers", "clusters", "server port collides with a cluster port"),
-		add("clusters_port_insert", "BEFORE INSERT ON clusters", "servers", "cluster port collides with a server port"),
-		add("clusters_port_update", "BEFORE UPDATE ON clusters", "servers", "cluster port collides with a server port"),
+		add("csfleet_servers_port_insert", "BEFORE INSERT ON csfleet_servers", "csfleet_clusters", "server port collides with a cluster port"),
+		add("csfleet_servers_port_update", "BEFORE UPDATE ON csfleet_servers", "csfleet_clusters", "server port collides with a cluster port"),
+		add("csfleet_clusters_port_insert", "BEFORE INSERT ON csfleet_clusters", "csfleet_servers", "cluster port collides with a server port"),
+		add("csfleet_clusters_port_update", "BEFORE UPDATE ON csfleet_clusters", "csfleet_servers", "cluster port collides with a server port"),
 	}
 	for _, t := range triggers {
 		if _, err := s.DB.Exec(t); err != nil {
@@ -343,7 +357,7 @@ func (s *Store) seedDefaults() error {
 	}
 	for _, d := range defaults {
 		_, err := s.DB.Exec(
-			"INSERT IGNORE INTO env_variables (`key`, value) VALUES (?, ?)",
+			"INSERT IGNORE INTO csfleet_env_variables (`key`, value) VALUES (?, ?)",
 			d.key, d.value,
 		)
 		if err != nil {
@@ -355,7 +369,7 @@ func (s *Store) seedDefaults() error {
 
 func (s *Store) LoadManifest(name string) (string, error) {
 	var manifest string
-	err := s.DB.QueryRow("SELECT manifest FROM plugin_manifests WHERE name = ?", name).Scan(&manifest)
+	err := s.DB.QueryRow("SELECT manifest FROM csfleet_plugin_manifests WHERE name = ?", name).Scan(&manifest)
 	if err != nil {
 		return "", fmt.Errorf("load manifest %q: %w", name, err)
 	}
@@ -364,7 +378,7 @@ func (s *Store) LoadManifest(name string) (string, error) {
 
 func (s *Store) LoadConfigFile(name string) (string, error) {
 	var content string
-	err := s.DB.QueryRow("SELECT content FROM config_files WHERE name = ?", name).Scan(&content)
+	err := s.DB.QueryRow("SELECT content FROM csfleet_config_files WHERE name = ?", name).Scan(&content)
 	if err != nil {
 		return "", fmt.Errorf("load config %q: %w", name, err)
 	}

@@ -8,29 +8,69 @@ import (
 	"csfleet/orchestrator/fleet"
 )
 
-// This file is the API's wire contract. The handlers speak these DTOs and map to
-// and from the internal database/fleet structs, so the HTTP surface is decoupled
-// from the DB schema. The split also encodes what a client may set: ip is
-// orchestrator-managed (response only); a server/cluster's plugins, configs and
-// env are baked into the container at start, so they appear only on create, never
-// on update.
+// --- Auth ---
+
+// userResponse is one web UI account, never including the password hash. Seed
+// marks the in-memory admin (from .env), which can't be deleted or reset via the UI.
+type userResponse struct {
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	Seed      bool      `json:"seed"`
+}
+
+// --- Orchestrator ---
+
+// orchestratorInfoResponse describes the host the orchestrator runs on, not any
+// one server or cluster. The identity/hardware fields are static (sampled once at
+// startup); Host carries the live, periodically-resampled utilization metrics.
+type orchestratorInfoResponse struct {
+	LocalIP  string    `json:"local_ip"`
+	PublicIP string    `json:"public_ip"`
+	Hostname string    `json:"hostname"`
+	CPUModel string    `json:"cpu_model"`
+	CPUCores int       `json:"cpu_cores"`
+	MemTotal uint64    `json:"mem_total_bytes"`
+	Host     hostStats `json:"host_stats"`
+}
+
+// hostStats is the live slice of orchestratorInfoResponse: utilization figures
+// refreshed by the background sampler.
+type hostStats struct {
+	CPUPercent     float64    `json:"cpu_percent"`
+	PerCorePercent []float64  `json:"per_core_percent"`
+	LoadAvg        [3]float64 `json:"load_avg"`
+	MemUsed        uint64     `json:"mem_used_bytes"`
+	MemAvailable   uint64     `json:"mem_available_bytes"`
+	SwapUsed       uint64     `json:"swap_used_bytes"`
+	DiskUsed       uint64     `json:"disk_used_bytes"`
+	DiskTotal      uint64     `json:"disk_total_bytes"`
+	UptimeSeconds  uint64     `json:"uptime_seconds"`
+	SampledAt      time.Time  `json:"sampled_at"`
+}
 
 // --- Servers ---
 
-// serverResponse is a server's spec plus its live state.
+// serverResponse is a server's spec plus its live state and the effective
+// plugin/config/env sets it actually runs (resolved global < cluster < server),
+// so a list or SSE consumer sees what a server runs without a follow-up call per
+// server. The dedicated /plugins, /configs and /env endpoints carry the same sets
+// with extra detail (override flag, env source scope).
 type serverResponse struct {
-	Name            string    `json:"name"`
-	IP              string    `json:"ip"`
-	Port            *int      `json:"port"`
-	Cluster         *string   `json:"cluster"`
-	AutoToken       *bool     `json:"auto_token"`
-	AcceptingConns  *bool     `json:"accepting_connections"`
-	RestartAfterHrs *float64  `json:"restart_after_hrs"`
-	StopAfterHrs    *float64  `json:"stop_after_hrs"`
-	DesiredState    string    `json:"desired_state"`
-	ActualState     string    `json:"actual_state"`
-	LastError       string    `json:"last_error,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Name            string            `json:"name"`
+	IP              string            `json:"ip"`
+	Port            *int              `json:"port"`
+	Cluster         *string           `json:"cluster"`
+	AutoToken       *bool             `json:"auto_token"`
+	AcceptingConns  *bool             `json:"accepting_connections"`
+	RestartAfterHrs *float64          `json:"restart_after_hrs"`
+	StopAfterHrs    *float64          `json:"stop_after_hrs"`
+	DesiredState    string            `json:"desired_state"`
+	ActualState     string            `json:"actual_state"`
+	LastError       string            `json:"last_error,omitempty"`
+	Plugins         []string          `json:"plugins"`
+	Configs         []string          `json:"configs"`
+	Env             map[string]string `json:"env"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 func toServerResponse(st fleet.ServerStatus) serverResponse {
@@ -51,18 +91,10 @@ func toServerResponse(st fleet.ServerStatus) serverResponse {
 	}
 }
 
-func toServerResponses(statuses []fleet.ServerStatus) []serverResponse {
-	out := make([]serverResponse, len(statuses))
-	for i, st := range statuses {
-		out[i] = toServerResponse(st)
-	}
-	return out
-}
-
-// createServerRequest is the body of POST /api/servers. There is no ip — the
-// orchestrator allocates it. Membership (exactly one of Port or Cluster) and the
+// createServerRequest is the body of POST /api/servers. Membership and the
 // Plugins/Configs/Env sets are fixed here. Plugins/Configs are tri-state: nil
-// inherits, a non-nil slice (even empty) overrides — empty meaning "run none".
+// inherits, a non-nil slice overrides. Empty means "run none".
+// Env variables are scoped overlay from global, cluster, then server.
 type createServerRequest struct {
 	Name            string            `json:"name"`
 	Port            *int              `json:"port"`
@@ -93,8 +125,7 @@ func (req createServerRequest) toRow() database.ServerRow {
 }
 
 // updateServerRequest is the body of PUT /api/servers/{name}: the live-mutable
-// fields only. Membership (cluster), ip, plugins, configs and env are create-only
-// and absent here. A standalone server's port may change (rebinds live).
+// fields only.
 type updateServerRequest struct {
 	Port            *int     `json:"port"`
 	AutoToken       *bool    `json:"auto_token"`
@@ -249,6 +280,23 @@ func toConfigSetResponse(c database.ScopedConfig) configSetResponse {
 	return configSetResponse{Overridden: c.Overridden, Items: c.Items}
 }
 
+// --- Effective per-server plugin / config sets ---
+//
+// Unlike the scope set responses above (which report what one scope defines),
+// these report the resolved set a server actually runs (global < cluster <
+// server). Overridden flags whether the server's own scope supplied the set
+// (vs inheriting it from a cluster or global).
+
+type effectivePluginsResponse struct {
+	Overridden bool     `json:"overridden"`
+	Items      []string `json:"items"`
+}
+
+type effectiveConfigsResponse struct {
+	Overridden bool     `json:"overridden"`
+	Items      []string `json:"items"`
+}
+
 // --- Plugin manifests (catalog) ---
 
 type manifestResponse struct {
@@ -277,12 +325,13 @@ type putManifestRequest struct {
 
 type configFileResponse struct {
 	Name      string    `json:"name"`
+	Filename  string    `json:"filename"`
 	Content   string    `json:"content"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func toConfigFileResponse(r database.ConfigFileRow) configFileResponse {
-	return configFileResponse{Name: r.Name, Content: r.Content, UpdatedAt: r.UpdatedAt}
+	return configFileResponse{Name: r.Name, Filename: r.Filename, Content: r.Content, UpdatedAt: r.UpdatedAt}
 }
 
 func toConfigFileResponses(rows []database.ConfigFileRow) []configFileResponse {
@@ -294,7 +343,8 @@ func toConfigFileResponses(rows []database.ConfigFileRow) []configFileResponse {
 }
 
 type putConfigFileRequest struct {
-	Content string `json:"content"`
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
 }
 
 // --- Env variables ---

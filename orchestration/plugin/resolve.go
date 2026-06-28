@@ -2,11 +2,19 @@ package plugin
 
 import "fmt"
 
+// Resolved is one manifest in the resolved install order. Name is the catalog
+// key (the plugin's identity for lookup, requires, and diagnostics); TOML is its
+// raw manifest body.
+type Resolved struct {
+	Name string
+	TOML string
+}
+
 // ResolveOrder takes a set of root plugin names and a loader that fetches
 // manifest TOML by name (from the DB). It walks the Requires graph, pulls
-// in all transitive dependencies, and returns manifest TOMLs in topological
+// in all transitive dependencies, and returns manifests in topological
 // order (dependencies before dependents).
-func ResolveOrder(roots []string, load func(string) (string, error)) ([]string, error) {
+func ResolveOrder(roots []string, load func(string) (string, error)) ([]Resolved, error) {
 	type node struct {
 		requires []string
 		toml     string
@@ -65,9 +73,9 @@ func ResolveOrder(roots []string, load func(string) (string, error)) ([]string, 
 		return nil, fmt.Errorf("cycle in plugin dependencies")
 	}
 
-	result := make([]string, len(order))
+	result := make([]Resolved, len(order))
 	for i, name := range order {
-		result[i] = nodes[name].toml
+		result[i] = Resolved{Name: name, TOML: nodes[name].toml}
 	}
 	return result, nil
 }

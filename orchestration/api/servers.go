@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"csfleet/orchestrator/database"
@@ -21,7 +22,7 @@ func (s *Server) listServers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, toServerResponses(statuses))
+	writeJSON(w, http.StatusOK, s.serverResponses(statuses))
 }
 
 func (s *Server) getServer(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +32,7 @@ func (s *Server) getServer(w http.ResponseWriter, r *http.Request) {
 		dbErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toServerResponse(s.statusFor(row)))
+	writeJSON(w, http.StatusOK, s.serverResponse(s.statusFor(row)))
 }
 
 func (s *Server) createServer(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +74,7 @@ func (s *Server) createServer(w http.ResponseWriter, r *http.Request) {
 		dbErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toServerResponse(s.statusFor(created)))
+	writeJSON(w, http.StatusCreated, s.serverResponse(s.statusFor(created)))
 }
 
 func (s *Server) updateServer(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +109,7 @@ func (s *Server) updateServer(w http.ResponseWriter, r *http.Request) {
 		dbErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toServerResponse(s.statusFor(updated)))
+	writeJSON(w, http.StatusOK, s.serverResponse(s.statusFor(updated)))
 }
 
 func (s *Server) deleteServer(w http.ResponseWriter, r *http.Request) {
@@ -141,28 +142,58 @@ func (s *Server) setDesired(w http.ResponseWriter, r *http.Request, state string
 //
 // A server's plugins, configs and env are fixed at creation (baked into the
 // container at start), so these are inspection-only — there is no PUT. Change
-// them by recreating the server or editing the cluster it inherits from.
+// them by recreating the server or editing the cluster it inherits from. Each
+// returns the effective set the server actually runs (resolved global < cluster
+// < server), not just what the server scope itself defines.
 
 func (s *Server) getServerPlugins(w http.ResponseWriter, r *http.Request) {
-	set, err := s.store.ServerPlugins(r.PathValue("name"))
+	name := r.PathValue("name")
+	row, err := s.store.GetServer(name)
+	if err != nil {
+		dbErr(w, err)
+		return
+	}
+	own, err := s.store.ServerPlugins(name)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, toPluginSetResponse(set))
+	items, err := s.store.EffectivePlugins(name, clusterOf(row))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, effectivePluginsResponse{Overridden: own.Overridden, Items: items})
 }
 
 func (s *Server) getServerConfigs(w http.ResponseWriter, r *http.Request) {
-	set, err := s.store.ServerConfigs(r.PathValue("name"))
+	name := r.PathValue("name")
+	row, err := s.store.GetServer(name)
+	if err != nil {
+		dbErr(w, err)
+		return
+	}
+	own, err := s.store.ServerConfigs(name)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, toConfigSetResponse(set))
+	items, err := s.store.EffectiveConfigs(name, clusterOf(row))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, effectiveConfigsResponse{Overridden: own.Overridden, Items: items})
 }
 
 func (s *Server) getServerEnv(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.ListEnvVars("server", r.PathValue("name"))
+	name := r.PathValue("name")
+	row, err := s.store.GetServer(name)
+	if err != nil {
+		dbErr(w, err)
+		return
+	}
+	rows, err := s.store.EffectiveEnv(name, clusterOf(row))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -171,6 +202,62 @@ func (s *Server) getServerEnv(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// serverResponse builds a server's DTO and overlays the effective plugin/config/
+// env sets it runs. serverResponses does the same for a list (GET /api/servers
+// and the SSE push), so a consumer sees what each server runs without a per-server
+// follow-up call.
+func (s *Server) serverResponse(st fleet.ServerStatus) serverResponse {
+	return s.withEffective(toServerResponse(st), st.ServerRow)
+}
+
+func (s *Server) serverResponses(statuses []fleet.ServerStatus) []serverResponse {
+	out := make([]serverResponse, len(statuses))
+	for i, st := range statuses {
+		out[i] = s.serverResponse(st)
+	}
+	return out
+}
+
+// withEffective fills the effective plugin/config/env sets onto a server DTO.
+// Best-effort: a resolution error leaves that field empty and is logged, so one
+// bad server never blanks the whole list or an SSE push.
+func (s *Server) withEffective(resp serverResponse, row database.ServerRow) serverResponse {
+	cluster := clusterOf(row)
+	// if a member has no own port, overlay its cluster's.
+	if resp.Port == nil && row.Cluster != nil {
+		if cl, err := s.store.GetCluster(*row.Cluster); err != nil {
+			log.Printf("[api] effective port for %q: %v", row.Name, err)
+		} else {
+			resp.Port = &cl.Port
+		}
+	}
+	if plugins, err := s.store.EffectivePlugins(row.Name, cluster); err != nil {
+		log.Printf("[api] effective plugins for %q: %v", row.Name, err)
+	} else {
+		resp.Plugins = plugins
+	}
+	if configs, err := s.store.EffectiveConfigs(row.Name, cluster); err != nil {
+		log.Printf("[api] effective configs for %q: %v", row.Name, err)
+	} else {
+		resp.Configs = configs
+	}
+	if env, err := s.store.LoadEnv(row.Name, cluster); err != nil {
+		log.Printf("[api] effective env for %q: %v", row.Name, err)
+	} else {
+		resp.Env = env
+	}
+	return resp
+}
+
+// clusterOf returns a server's cluster name, or "" when it is standalone — the
+// form the resolve helpers expect.
+func clusterOf(row database.ServerRow) string {
+	if row.Cluster != nil {
+		return *row.Cluster
+	}
+	return ""
+}
 
 // serverStatuses merges the configured fleet (DB rows, authoritative for the
 // spec) with live worker phases (manager, authoritative for actual_state). A

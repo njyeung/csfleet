@@ -172,6 +172,11 @@ func AtomicWrite(dest string, data []byte) error {
 		return err
 	}
 	tmpName := tmp.Name()
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)

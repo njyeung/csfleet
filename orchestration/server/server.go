@@ -28,12 +28,13 @@ type Definition struct {
 	Name    string
 	Network string            // bridge to attach to
 	IP      string            // static address on that bridge (the proxy's DNAT target)
-	Env     map[string]string // game settings + other env variables, resolved from env_variables
+	Env     map[string]string // game settings + other env variables, resolved from csfleet_env_variables
 }
 
 type ConfigPayload struct {
-	Name    string
-	Content string
+	Name     string
+	Filename string
+	Content  string
 }
 
 type Instance struct {
@@ -65,15 +66,15 @@ func Start(ctx context.Context, cli *client.Client, root string, def Definition,
 		ov.unmount()
 		return nil, fmt.Errorf("resolve plugins: %w", err)
 	}
-	for _, toml := range manifests {
-		if err := plugin.Apply(csgo, toml, def.Env); err != nil {
+	for _, m := range manifests {
+		if err := plugin.Apply(csgo, m.Name, m.TOML, def.Env); err != nil {
 			ov.unmount()
 			return nil, fmt.Errorf("plugin: %w", err)
 		}
 	}
 
 	for _, c := range configs {
-		if err := serverconfig.Apply(csgo, c.Name, c.Content); err != nil {
+		if err := serverconfig.Apply(csgo, c.Name, c.Filename, c.Content); err != nil {
 			ov.unmount()
 			return nil, fmt.Errorf("config %s: %w", c.Name, err)
 		}

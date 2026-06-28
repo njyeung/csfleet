@@ -1,0 +1,1 @@
+import{n as e,t}from"./CTMlByn2.js";var n={list:()=>e(`GET`,`/api/plugins`),get:n=>e(`GET`,`/api/plugins/${t(n)}`),put:(n,r)=>e(`PUT`,`/api/plugins/${t(n)}`,{body:{manifest:r}}),remove:n=>e(`DELETE`,`/api/plugins/${t(n)}`)};export{n as t};

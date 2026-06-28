@@ -1,8 +1,20 @@
-# PlayerSettings — per-player settings store used by WeaponPaints.
-# Shape A: ships addons/counterstrikesharp/{plugins/PlayerSettings,shared/PlayerSettingsApi}.
-name = "PlayerSettings"
-
 [source]
-type  = "github_release"
-repo  = "NickFox007/PlayerSettingsCS2"
+type = "github_release"
+repo = "NickFox007/PlayerSettingsCS2"
 asset = '^PlayerSettings\.zip$'
+
+# Render the same DB params WeaponPaints uses so both plugins share storage.
+[[template]]
+path = "addons/counterstrikesharp/configs/plugins/PlayerSettings/PlayerSettings.json"
+body = '''
+{
+  "DatabaseParams": {
+    "Host": "${db.host}:${db.port}",
+    "Name": "${db.name}",
+    "User": "${db.user}",
+    "Password": "${db.pass}",
+    "Table": "settings_"
+  },
+  "ConfigVersion": 1
+}
+'''

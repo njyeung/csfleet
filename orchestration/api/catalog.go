@@ -42,7 +42,7 @@ func (s *Server) putManifest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteManifest(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteManifest(r.PathValue("name")); err != nil {
-		// plugin_assignments FK blocks deletion while a scope still assigns it
+		// csfleet_plugin_assignments FK blocks deletion while a scope still assigns it
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -76,7 +76,11 @@ func (s *Server) putConfigFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	if err := s.store.UpsertConfigFile(name, body.Content); err != nil {
+	if body.Filename == "" {
+		writeErr(w, http.StatusBadRequest, "filename is required")
+		return
+	}
+	if err := s.store.UpsertConfigFile(name, body.Filename, body.Content); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -85,7 +89,7 @@ func (s *Server) putConfigFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteConfigFile(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteConfigFile(r.PathValue("name")); err != nil {
-		// config_assignments FK blocks deletion while a scope still assigns it
+		// csfleet_config_assignments FK blocks deletion while a scope still assigns it
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
