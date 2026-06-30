@@ -6,10 +6,6 @@
 	// Per-instance env is create-only, so this is display-only here.
 	let { vars, loading = false }: { vars: EnvVar[] | null; loading?: boolean } = $props();
 
-	// Credentials seeded into global env. Match on the bare key.
-	const SECRET = /(^|\.)(pass|rootpass|password|secret|token)$/i;
-	const isSecret = (key: string) => SECRET.test(key);
-
 	const scopeLabel = (v: EnvVar) => (v.scope_name ? `${v.scope}:${v.scope_name}` : v.scope);
 </script>
 
@@ -28,7 +24,7 @@
 				<div class="flex items-center gap-3 px-2 py-1.5 text-sm">
 					<code class="shrink-0 text-neutral-300">{v.key}</code>
 					<span class="min-w-0 flex-1 truncate font-mono text-xs text-neutral-400">
-						{isSecret(v.key) ? '••••••••' : v.value}
+						{v.value}
 					</span>
 					<span class="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] uppercase text-neutral-500">
 						{scopeLabel(v)}
