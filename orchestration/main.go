@@ -17,6 +17,7 @@ import (
 
 	"csfleet/orchestrator/api"
 	"csfleet/orchestrator/database"
+	"csfleet/orchestrator/internal/install"
 	"csfleet/orchestrator/fleet"
 	"csfleet/orchestrator/provision"
 	"csfleet/orchestrator/proxy"
@@ -121,7 +122,8 @@ func repoRoot() string {
 func main() {
 	root := repoRoot()
 	loadDotenv(filepath.Join(root, ".env"))
-	cfg := configFromEnv()
+	install.ConfigureCache(root)
+	cfg := configFromEnv(root)
 	ctx := context.Background()
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -129,6 +131,15 @@ func main() {
 		log.Fatalf("[orchestrator] docker client: %v", err)
 	}
 	defer cli.Close()
+
+	// NewClientWithOpts doesn't touch the daemon; ping so a missing/stopped
+	// Docker fails fast with an actionable message instead of deep in provisioning.
+	if _, err := cli.Ping(ctx); err != nil {
+		log.Fatalf("[orchestrator] cannot reach the Docker daemon (%v)\n"+
+			"  Docker must be installed and running. On most distros:\n"+
+			"    install: https://docs.docker.com/engine/install/\n"+
+			"    start:   sudo systemctl enable --now docker", err)
+	}
 
 	killOrphans(ctx, cli)
 

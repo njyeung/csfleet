@@ -5,7 +5,7 @@ import "path/filepath"
 // Filesystem layout provisioning works against. Everything hangs off the repo
 // root; base/ is the single shared, read-only CS2 install every server overlays.
 //
-//	<root>/hooks/pre.sh               -> source of the boot hook
+//	<root>/hooks/pre.sh               -> optional boot hook override
 //
 //	<root>/base/                      -> the cs2-dedicated install root (the big
 //	                                     shared overlay lowerdir). steamcmd writes
@@ -21,7 +21,7 @@ type paths struct {
 	gameCSGO    string // base/game/csgo
 	cssDir      string // gameCSGO/addons/counterstrikesharp
 	appManifest string // base/steamapps/appmanifest_730.acf
-	preHook     string // hooks/pre.sh
+	preHook     string // optional hooks/pre.sh override
 	bakedHook   string // base/pre.sh
 	receipt     string // base/.csfleet-versions.json
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -68,7 +69,7 @@ type Config struct {
 	TLSEmail    string   // TLS_EMAIL: optional ACME account contact
 }
 
-func configFromEnv() Config {
+func configFromEnv(root string) Config {
 	port, _ := strconv.Atoi(envOr("DB_PORT", "3306"))
 
 	// TLS is on when TLS_DOMAINS is set,
@@ -92,7 +93,7 @@ func configFromEnv() Config {
 		AdminPass:   os.Getenv("ADMIN_PASS"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		TLSDomains:  tlsDomains,
-		TLSCacheDir: envOr("TLS_CACHE_DIR", "/var/lib/csfleet/autocert"),
+		TLSCacheDir: envOr("TLS_CACHE_DIR", filepath.Join(root, "cache", "autocert")),
 		TLSEmail:    os.Getenv("TLS_EMAIL"),
 	}
 

@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +23,7 @@ import (
 // so this is what keeps release lookups from hitting the 60/hr limit). Entries
 // without an ETag are refetched on expiry — fine, they rarely change and it
 // keeps callers from having to reason about per-URL freshness.
-const cacheTTL = 15 * time.Minute
+const cacheTTL = 60 * time.Minute
 
 // cacheMaxDefault bounds total blob bytes; least-recently-used entries are
 // evicted past it. Override with CSFLEET_CACHE_MAX (bytes).
@@ -32,22 +31,26 @@ const cacheMaxDefault = 5 << 30 // 5 GiB
 
 // Default is the process-wide cache the package-level Download/FetchJSON/
 // FetchString helpers fetch through.
-var Default = NewCache(cacheDirFromEnv(), cacheMaxFromEnv())
+var Default = NewCache(cacheDirFromEnv(""), cacheMaxDefault)
 
 // Cache is a disk-backed HTTP GET cache keyed by URL. Small JSON/text and large
 // archives share one store: each entry is a <sha256(url)>.blob body plus a
 // .meta sidecar holding the validators (ETag/Last-Modified) and fetch time.
 type Cache struct {
-	dir      string
-	ttl      time.Duration
-	maxBytes int64
-	group    singleflight.Group
+	dir       string
+	ttl       time.Duration
+	maxBytes  int64
+	startedAt time.Time
+	group     singleflight.Group
 }
 
 // NewCache returns a cache rooted at dir that keeps total blob size under
-// maxBytes.
+// maxBytes. Entries left by earlier runs are revalidated on first use this run
+// (see fetch), so restarting the orchestrator re-checks every upstream for
+// updates — matching the provisioning step, which re-checks versions rather
+// than rebuilding blindly, without re-downloading assets that haven't changed.
 func NewCache(dir string, maxBytes int64) *Cache {
-	return &Cache{dir: dir, ttl: cacheTTL, maxBytes: maxBytes}
+	return &Cache{dir: dir, ttl: cacheTTL, maxBytes: maxBytes, startedAt: time.Now()}
 }
 
 // cacheMeta is the .meta sidecar for one cached response.
@@ -75,8 +78,10 @@ func (c *Cache) fetch(url string) (string, error) {
 	meta, haveMeta := c.readMeta(metaPath)
 
 	// Fresh hit: serve without touching the network, bumping the blob's mtime
-	// so LRU eviction treats it as recently used.
-	if haveMeta && time.Since(meta.FetchedAt) < c.ttl {
+	// so LRU eviction treats it as recently used. Entries fetched by an earlier
+	// run (before startedAt) are never fresh, so the first use each run makes a
+	// conditional request — picking up new releases while a 304 keeps the blob.
+	if haveMeta && meta.FetchedAt.After(c.startedAt) && time.Since(meta.FetchedAt) < c.ttl {
 		if _, err := os.Stat(blob); err == nil {
 			touch(blob)
 			return blob, nil
@@ -273,18 +278,17 @@ func statusError(url string, resp *http.Response) error {
 	return fmt.Errorf("GET %s: status %s", url, resp.Status)
 }
 
-func cacheDirFromEnv() string {
+// ConfigureCache points Default at <root>/cache/assets (unless
+// CSFLEET_CACHE_DIR overrides). Call once at startup, before any fetch, so the
+// download cache lives inside the repo like base/ and instances/ rather than a
+// machine-wide path.
+func ConfigureCache(root string) {
+	Default = NewCache(cacheDirFromEnv(root), cacheMaxDefault)
+}
+
+func cacheDirFromEnv(root string) string {
 	if d := os.Getenv("CSFLEET_CACHE_DIR"); d != "" {
 		return d
 	}
-	return "/var/lib/csfleet/cache"
-}
-
-func cacheMaxFromEnv() int64 {
-	if v := os.Getenv("CSFLEET_CACHE_MAX"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			return n
-		}
-	}
-	return cacheMaxDefault
+	return filepath.Join(root, "cache", "assets")
 }
