@@ -8,7 +8,7 @@ import (
 // --- Servers ---
 
 func (s *Store) ListServers() ([]ServerRow, error) {
-	rows, err := s.DB.Query(`SELECT name, ip, port, cluster, auto_token,
+	rows, err := s.DB.Query(`SELECT name, ip, port, cluster,
 		accepting_connections, restart_after_hrs, stop_after_hrs, desired_state, updated_at
 		FROM csfleet_servers ORDER BY name`)
 	if err != nil {
@@ -19,7 +19,7 @@ func (s *Store) ListServers() ([]ServerRow, error) {
 	var out []ServerRow
 	for rows.Next() {
 		var r ServerRow
-		if err := rows.Scan(&r.Name, &r.IP, &r.Port, &r.Cluster, &r.AutoToken,
+		if err := rows.Scan(&r.Name, &r.IP, &r.Port, &r.Cluster,
 			&r.AcceptingConns, &r.RestartAfterHrs, &r.StopAfterHrs, &r.DesiredState, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan server: %w", err)
 		}
@@ -30,10 +30,10 @@ func (s *Store) ListServers() ([]ServerRow, error) {
 
 func (s *Store) GetServer(name string) (ServerRow, error) {
 	var r ServerRow
-	err := s.DB.QueryRow(`SELECT name, ip, port, cluster, auto_token,
+	err := s.DB.QueryRow(`SELECT name, ip, port, cluster,
 		accepting_connections, restart_after_hrs, stop_after_hrs, desired_state, updated_at
 		FROM csfleet_servers WHERE name = ?`, name).Scan(
-		&r.Name, &r.IP, &r.Port, &r.Cluster, &r.AutoToken,
+		&r.Name, &r.IP, &r.Port, &r.Cluster,
 		&r.AcceptingConns, &r.RestartAfterHrs, &r.StopAfterHrs, &r.DesiredState, &r.UpdatedAt)
 	if err != nil {
 		return r, fmt.Errorf("get server %q: %w", name, err)
@@ -54,10 +54,10 @@ func (s *Store) CreateServer(r ServerRow, plugins, configs *[]string, env map[st
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(`INSERT INTO csfleet_servers
-		(name, ip, port, cluster, auto_token, accepting_connections,
+		(name, ip, port, cluster, accepting_connections,
 		 restart_after_hrs, stop_after_hrs, desired_state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.Name, r.IP, r.Port, r.Cluster, r.AutoToken, r.AcceptingConns,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Name, r.IP, r.Port, r.Cluster, r.AcceptingConns,
 		r.RestartAfterHrs, r.StopAfterHrs, r.DesiredState); err != nil {
 		return fmt.Errorf("create server %q: %w", r.Name, err)
 	}
@@ -81,10 +81,10 @@ func (s *Store) CreateServer(r ServerRow, plugins, configs *[]string, env map[st
 
 func (s *Store) UpdateServer(name string, r ServerRow) error {
 	_, err := s.DB.Exec(`UPDATE csfleet_servers SET
-		ip = ?, port = ?, cluster = ?, auto_token = ?, accepting_connections = ?,
+		ip = ?, port = ?, cluster = ?, accepting_connections = ?,
 		restart_after_hrs = ?, stop_after_hrs = ?, desired_state = ?
 		WHERE name = ?`,
-		r.IP, r.Port, r.Cluster, r.AutoToken, r.AcceptingConns,
+		r.IP, r.Port, r.Cluster, r.AcceptingConns,
 		r.RestartAfterHrs, r.StopAfterHrs, r.DesiredState,
 		name)
 	if err != nil {
@@ -110,7 +110,7 @@ func (s *Store) UpdateServerDesiredState(name, state string) error {
 // --- Clusters ---
 
 func (s *Store) ListClusters() ([]ClusterRow, error) {
-	rows, err := s.DB.Query(`SELECT name, port, auto_token, accepting_connections,
+	rows, err := s.DB.Query(`SELECT name, port, accepting_connections,
 		restart_after_hrs, stop_after_hrs, lb_policy, updated_at FROM csfleet_clusters ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list clusters: %w", err)
@@ -120,7 +120,7 @@ func (s *Store) ListClusters() ([]ClusterRow, error) {
 	var out []ClusterRow
 	for rows.Next() {
 		var r ClusterRow
-		if err := rows.Scan(&r.Name, &r.Port, &r.AutoToken, &r.AcceptingConns,
+		if err := rows.Scan(&r.Name, &r.Port, &r.AcceptingConns,
 			&r.RestartAfterHrs, &r.StopAfterHrs, &r.LBPolicy, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan cluster: %w", err)
 		}
@@ -131,9 +131,9 @@ func (s *Store) ListClusters() ([]ClusterRow, error) {
 
 func (s *Store) GetCluster(name string) (ClusterRow, error) {
 	var r ClusterRow
-	err := s.DB.QueryRow(`SELECT name, port, auto_token, accepting_connections,
+	err := s.DB.QueryRow(`SELECT name, port, accepting_connections,
 		restart_after_hrs, stop_after_hrs, lb_policy, updated_at FROM csfleet_clusters WHERE name = ?`, name).
-		Scan(&r.Name, &r.Port, &r.AutoToken, &r.AcceptingConns,
+		Scan(&r.Name, &r.Port, &r.AcceptingConns,
 			&r.RestartAfterHrs, &r.StopAfterHrs, &r.LBPolicy, &r.UpdatedAt)
 	if err != nil {
 		return r, fmt.Errorf("get cluster %q: %w", name, err)
@@ -152,9 +152,9 @@ func (s *Store) CreateCluster(r ClusterRow, plugins, configs *[]string, env map[
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(`INSERT INTO csfleet_clusters
-		(name, port, auto_token, accepting_connections, restart_after_hrs, stop_after_hrs, lb_policy)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.Name, r.Port, r.AutoToken, r.AcceptingConns, r.RestartAfterHrs, r.StopAfterHrs, r.LBPolicy); err != nil {
+		(name, port, accepting_connections, restart_after_hrs, stop_after_hrs, lb_policy)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		r.Name, r.Port, r.AcceptingConns, r.RestartAfterHrs, r.StopAfterHrs, r.LBPolicy); err != nil {
 		return fmt.Errorf("create cluster %q: %w", r.Name, err)
 	}
 	if plugins != nil {
@@ -177,10 +177,10 @@ func (s *Store) CreateCluster(r ClusterRow, plugins, configs *[]string, env map[
 
 func (s *Store) UpdateCluster(name string, r ClusterRow) error {
 	_, err := s.DB.Exec(`UPDATE csfleet_clusters SET
-		port = ?, auto_token = ?, accepting_connections = ?,
+		port = ?, accepting_connections = ?,
 		restart_after_hrs = ?, stop_after_hrs = ?, lb_policy = ?
 		WHERE name = ?`,
-		r.Port, r.AutoToken, r.AcceptingConns, r.RestartAfterHrs, r.StopAfterHrs, r.LBPolicy, name)
+		r.Port, r.AcceptingConns, r.RestartAfterHrs, r.StopAfterHrs, r.LBPolicy, name)
 	if err != nil {
 		return fmt.Errorf("update cluster %q: %w", name, err)
 	}
@@ -323,42 +323,6 @@ func (s *Store) DeleteConfigFile(name string) error {
 	_, err := s.DB.Exec("DELETE FROM csfleet_config_files WHERE name = ?", name)
 	if err != nil {
 		return fmt.Errorf("delete config file %q: %w", name, err)
-	}
-	return nil
-}
-
-// --- GSLT tokens (the claim pool) ---
-
-func (s *Store) ListGSLTTokens() ([]string, error) {
-	rows, err := s.DB.Query("SELECT token FROM csfleet_gslt_tokens ORDER BY token")
-	if err != nil {
-		return nil, fmt.Errorf("list gslt tokens: %w", err)
-	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
-		var t string
-		if err := rows.Scan(&t); err != nil {
-			return nil, fmt.Errorf("scan gslt token: %w", err)
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) AddGSLTToken(token string) error {
-	_, err := s.DB.Exec("INSERT IGNORE INTO csfleet_gslt_tokens (token) VALUES (?)", token)
-	if err != nil {
-		return fmt.Errorf("add gslt token: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) DeleteGSLTToken(token string) error {
-	_, err := s.DB.Exec("DELETE FROM csfleet_gslt_tokens WHERE token = ?", token)
-	if err != nil {
-		return fmt.Errorf("delete gslt token: %w", err)
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ const discoveryInterval = 30 * time.Second
 // Manager is the dispatcher. It owns no lifecycle logic itself: a periodic
 // discovery pass spawns one worker per server row, and each worker reconciles
 // its own server against the database (the source of truth). The Manager only
-// provides shared services the workers need: a GSLT allocator and a status
+// provides shared services the workers need: proxy/docker access and a status
 // change signal.
 type Manager struct {
 	store *database.Store
@@ -27,9 +27,6 @@ type Manager struct {
 
 	mu      sync.Mutex
 	workers map[string]*worker
-
-	tokensMu sync.Mutex
-	inUse    map[string]struct{}
 
 	changeCh chan struct{} // buffered(1), coalesces status-change notifications
 	nudge    chan struct{} // buffered(1), wakes the discovery loop
@@ -45,7 +42,6 @@ func New(store *database.Store, px *proxy.Proxy, cli *client.Client, root string
 		cli:      cli,
 		root:     root,
 		workers:  make(map[string]*worker),
-		inUse:    make(map[string]struct{}),
 		changeCh: make(chan struct{}, 1),
 		nudge:    make(chan struct{}, 1),
 	}
@@ -157,34 +153,4 @@ func (m *Manager) signalChange() {
 	case m.changeCh <- struct{}{}:
 	default:
 	}
-}
-
-// claimToken hands out a GSLT from the pool that no live server currently holds,
-// or "" if none are free. The allocator is the single source of truth for which
-// tokens are in use, so concurrent workers never double-claim.
-func (m *Manager) claimToken() string {
-	m.tokensMu.Lock()
-	defer m.tokensMu.Unlock()
-
-	tokens, err := m.store.ListGSLTTokens()
-	if err != nil {
-		log.Printf("[fleet] list gslt tokens: %v", err)
-		return ""
-	}
-	for _, t := range tokens {
-		if _, used := m.inUse[t]; !used {
-			m.inUse[t] = struct{}{}
-			return t
-		}
-	}
-	return ""
-}
-
-func (m *Manager) releaseToken(token string) {
-	if token == "" {
-		return
-	}
-	m.tokensMu.Lock()
-	delete(m.inUse, token)
-	m.tokensMu.Unlock()
 }

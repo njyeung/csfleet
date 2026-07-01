@@ -8,8 +8,7 @@
 	//     (global, plus the cluster tier for a member), each badged with its scope.
 	//     "Override" copies a key into the editable list to shadow it.
 	//   • This instance — the editable overlay that becomes the `env` create field.
-	// Reserved vars are silently dropped on the wire; SRCDS_TOKEN is handled
-	// by TokenField, so it's absent from the catalog here.
+	// Reserved vars are silently dropped on the wire.
 	let {
 		value = $bindable({}),
 		inherited = [],

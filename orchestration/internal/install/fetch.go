@@ -9,88 +9,88 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
-// Download GETs url and writes the body to dest, retrying transient failures.
-// Redirects (e.g. GitHub asset URLs) are followed by the default client.
+// Download copies url's cached body to dest, fetching through Default. Big
+// assets keyed by a version-stamped URL are downloaded once and reused across
+// installs. Redirects (e.g. GitHub asset URLs) are followed by the client.
 func Download(url, dest string) error {
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		lastErr = downloadOnce(url, dest)
-		if lastErr == nil {
-			return nil
-		}
-		log.Printf("[install] download %s failed (attempt %d/3): %v", url, attempt, lastErr)
-		time.Sleep(time.Duration(attempt) * time.Second)
-	}
-	return fmt.Errorf("download %s: %w", url, lastErr)
+	return Default.File(url, dest)
 }
 
-func downloadOnce(url, dest string) error {
-	resp, err := httpClient.Get(url)
+// FetchString GETs url (through Default) and returns the trimmed body. Used for
+// AlliedModders' mmsource-latest-linux pointer file.
+func FetchString(url string) (string, error) {
+	return Default.String(url)
+}
+
+// FetchJSON GETs url (through Default) and decodes the JSON body into v.
+func FetchJSON(url string, v any) error {
+	return Default.JSON(url, v)
+}
+
+// File copies the cached body for url to dest, hardlinking when possible so a
+// multi-gigabyte asset isn't duplicated on the same filesystem.
+func (c *Cache) File(url, dest string) error {
+	path, err := c.Get(url)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %s", resp.Status)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
 	}
+	os.Remove(dest)
+	if os.Link(path, dest) == nil {
+		return nil
+	}
+	in, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
 	out, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
 		return err
 	}
 	return out.Close()
 }
 
-// FetchString GETs url and returns the trimmed body. Used for AlliedModders'
-// mmsource-latest-linux pointer file.
-func FetchString(url string) (string, error) {
-	resp, err := httpClient.Get(url)
+// String returns the cached body for url, trimmed.
+func (c *Cache) String(url string) (string, error) {
+	path, err := c.Get(url)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: status %s", url, resp.Status)
-	}
-	body, err := io.ReadAll(resp.Body)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(body)), nil
+	return strings.TrimSpace(string(data)), nil
 }
 
-// FetchJSON GETs url and decodes the JSON body into v. Sends a GitHub token from
-// $GITHUB_TOKEN when present so release lookups aren't rate-limited.
-func FetchJSON(url string, v any) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+// JSON decodes the cached body for url into v.
+func (c *Cache) JSON(url string, v any) error {
+	path, err := c.Get(url)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" && strings.Contains(url, "api.github.com") {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := httpClient.Do(req)
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: status %s", url, resp.Status)
-	}
-	return json.NewDecoder(resp.Body).Decode(v)
+	defer f.Close()
+	return json.NewDecoder(f).Decode(v)
 }
 
 // Release is a GitHub release and its downloadable assets.

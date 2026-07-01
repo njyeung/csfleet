@@ -60,7 +60,6 @@ type serverResponse struct {
 	IP              string            `json:"ip"`
 	Port            *int              `json:"port"`
 	Cluster         *string           `json:"cluster"`
-	AutoToken       *bool             `json:"auto_token"`
 	AcceptingConns  *bool             `json:"accepting_connections"`
 	RestartAfterHrs *float64          `json:"restart_after_hrs"`
 	StopAfterHrs    *float64          `json:"stop_after_hrs"`
@@ -80,7 +79,6 @@ func toServerResponse(st fleet.ServerStatus) serverResponse {
 		IP:              r.IP,
 		Port:            r.Port,
 		Cluster:         r.Cluster,
-		AutoToken:       r.AutoToken,
 		AcceptingConns:  r.AcceptingConns,
 		RestartAfterHrs: r.RestartAfterHrs,
 		StopAfterHrs:    r.StopAfterHrs,
@@ -99,7 +97,6 @@ type createServerRequest struct {
 	Name            string            `json:"name"`
 	Port            *int              `json:"port"`
 	Cluster         *string           `json:"cluster"`
-	AutoToken       *bool             `json:"auto_token"`
 	AcceptingConns  *bool             `json:"accepting_connections"`
 	RestartAfterHrs *float64          `json:"restart_after_hrs"`
 	StopAfterHrs    *float64          `json:"stop_after_hrs"`
@@ -116,7 +113,6 @@ func (req createServerRequest) toRow() database.ServerRow {
 		Name:            req.Name,
 		Port:            req.Port,
 		Cluster:         req.Cluster,
-		AutoToken:       req.AutoToken,
 		AcceptingConns:  req.AcceptingConns,
 		RestartAfterHrs: req.RestartAfterHrs,
 		StopAfterHrs:    req.StopAfterHrs,
@@ -128,7 +124,6 @@ func (req createServerRequest) toRow() database.ServerRow {
 // fields only.
 type updateServerRequest struct {
 	Port            *int     `json:"port"`
-	AutoToken       *bool    `json:"auto_token"`
 	AcceptingConns  *bool    `json:"accepting_connections"`
 	RestartAfterHrs *float64 `json:"restart_after_hrs"`
 	StopAfterHrs    *float64 `json:"stop_after_hrs"`
@@ -147,7 +142,6 @@ func (req updateServerRequest) applyTo(row *database.ServerRow) error {
 		}
 		row.Port = req.Port
 	}
-	row.AutoToken = req.AutoToken
 	row.AcceptingConns = req.AcceptingConns
 	row.RestartAfterHrs = req.RestartAfterHrs
 	row.StopAfterHrs = req.StopAfterHrs
@@ -162,7 +156,6 @@ func (req updateServerRequest) applyTo(row *database.ServerRow) error {
 type clusterResponse struct {
 	Name            string    `json:"name"`
 	Port            int       `json:"port"`
-	AutoToken       bool      `json:"auto_token"`
 	AcceptingConns  bool      `json:"accepting_connections"`
 	RestartAfterHrs *float64  `json:"restart_after_hrs"`
 	StopAfterHrs    *float64  `json:"stop_after_hrs"`
@@ -174,7 +167,6 @@ func toClusterResponse(r database.ClusterRow) clusterResponse {
 	return clusterResponse{
 		Name:            r.Name,
 		Port:            r.Port,
-		AutoToken:       r.AutoToken,
 		AcceptingConns:  r.AcceptingConns,
 		RestartAfterHrs: r.RestartAfterHrs,
 		StopAfterHrs:    r.StopAfterHrs,
@@ -191,13 +183,12 @@ func toClusterResponses(rows []database.ClusterRow) []clusterResponse {
 	return out
 }
 
-// createClusterRequest is the body of POST /api/clusters. AutoToken/AcceptingConns
-// are pointers so an omitted field falls back to the schema default (TRUE) rather
-// than decoding as false. Plugins/Configs/Env are set here and immutable after.
+// createClusterRequest is the body of POST /api/clusters. AcceptingConns is a
+// pointer so an omitted field falls back to the schema default (TRUE) rather than
+// decoding as false. Plugins/Configs/Env are set here and immutable after.
 type createClusterRequest struct {
 	Name            string            `json:"name"`
 	Port            int               `json:"port"`
-	AutoToken       *bool             `json:"auto_token"`
 	AcceptingConns  *bool             `json:"accepting_connections"`
 	RestartAfterHrs *float64          `json:"restart_after_hrs"`
 	StopAfterHrs    *float64          `json:"stop_after_hrs"`
@@ -208,19 +199,15 @@ type createClusterRequest struct {
 }
 
 // toRow maps the request to a ClusterRow, applying the inheritable defaults
-// (auto_token/accepting TRUE, round-robin) a body may omit.
+// (accepting TRUE, round-robin) a body may omit.
 func (req createClusterRequest) toRow() database.ClusterRow {
 	row := database.ClusterRow{
 		Name:            req.Name,
 		Port:            req.Port,
-		AutoToken:       true,
 		AcceptingConns:  true,
 		RestartAfterHrs: req.RestartAfterHrs,
 		StopAfterHrs:    req.StopAfterHrs,
 		LBPolicy:        req.LBPolicy,
-	}
-	if req.AutoToken != nil {
-		row.AutoToken = *req.AutoToken
 	}
 	if req.AcceptingConns != nil {
 		row.AcceptingConns = *req.AcceptingConns
@@ -236,20 +223,16 @@ func (req createClusterRequest) toRow() database.ClusterRow {
 // Port rebinds every member (worker reconcile -> rebind).
 type updateClusterRequest struct {
 	Port            int      `json:"port"`
-	AutoToken       *bool    `json:"auto_token"`
 	AcceptingConns  *bool    `json:"accepting_connections"`
 	RestartAfterHrs *float64 `json:"restart_after_hrs"`
 	StopAfterHrs    *float64 `json:"stop_after_hrs"`
 	LBPolicy        string   `json:"lb_policy"`
 }
 
-// applyTo overlays the update onto an existing cluster row. A nil AutoToken/
-// AcceptingConns or empty LBPolicy preserves the current value.
+// applyTo overlays the update onto an existing cluster row. A nil AcceptingConns
+// or empty LBPolicy preserves the current value.
 func (req updateClusterRequest) applyTo(row *database.ClusterRow) {
 	row.Port = req.Port
-	if req.AutoToken != nil {
-		row.AutoToken = *req.AutoToken
-	}
 	if req.AcceptingConns != nil {
 		row.AcceptingConns = *req.AcceptingConns
 	}

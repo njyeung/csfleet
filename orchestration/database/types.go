@@ -3,7 +3,7 @@ package database
 import "time"
 
 // ServerRow is the raw spec for one server. The override-tier fields
-// (AutoToken, AcceptingConns, RestartAfterHrs, StopAfterHrs) are nullable: nil
+// (AcceptingConns, RestartAfterHrs, StopAfterHrs) are nullable: nil
 // means "inherit from the cluster" (else a built-in default). For the hour
 // fields a non-nil value < 0 means "no limit" — distinct from nil/inherit, so a
 // server can explicitly opt out of a cluster-wide cadence. See ResolveServer.
@@ -12,7 +12,6 @@ type ServerRow struct {
 	IP              string
 	Port            *int
 	Cluster         *string
-	AutoToken       *bool
 	AcceptingConns  *bool
 	RestartAfterHrs *float64
 	StopAfterHrs    *float64
@@ -21,13 +20,12 @@ type ServerRow struct {
 }
 
 // ClusterRow is the shared spec a cluster's members inherit. Port is structural
-// (every member ingresses on it); AutoToken/AcceptingConns/RestartAfterHrs/
-// StopAfterHrs are the inheritable override-tier defaults; LBPolicy is
+// (every member ingresses on it); AcceptingConns/RestartAfterHrs/StopAfterHrs
+// are the inheritable override-tier defaults; LBPolicy is
 // cluster-owned (how the proxy spreads new sessions across members).
 type ClusterRow struct {
 	Name            string
 	Port            int
-	AutoToken       bool
 	AcceptingConns  bool
 	RestartAfterHrs *float64
 	StopAfterHrs    *float64
@@ -50,7 +48,6 @@ type EffectiveServer struct {
 	Row        ServerRow // the raw server spec
 	Port       uint16    // external port: the server's own, else its cluster's
 	Standalone bool      // carries its own port (vs being a cluster member)
-	AutoToken  bool
 	Accepting  bool
 	RestartHrs float64 // <= 0 means no limit
 	StopHrs    float64 // <= 0 means no limit

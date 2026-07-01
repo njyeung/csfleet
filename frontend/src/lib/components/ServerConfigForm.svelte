@@ -17,13 +17,12 @@
 	let port = $state(untrack(() => server.port));
 	// Keep null (= inherit from cluster for a member; backend default otherwise) —
 	// don't coerce to false, or saving a member would clobber its inheritance.
-	let autoToken = $state<boolean | null>(untrack(() => server.auto_token));
 	let accepting = $state<boolean | null>(untrack(() => server.accepting_connections));
 	let restart = $state<number | null>(untrack(() => server.restart_after_hrs ?? null));
 	let stop = $state<number | null>(untrack(() => server.stop_after_hrs ?? null));
 
 	function snapshot() {
-		return { port, autoToken, accepting, restart, stop };
+		return { port, accepting, restart, stop };
 	}
 	// Baseline for dirty-tracking; advances on a successful save (independent of SSE).
 	let baseline = $state(untrack(snapshot));
@@ -49,7 +48,6 @@
 	const portInvalid = $derived(!isMember && (port == null || port <= 0));
 	const dirty = $derived(
 		port !== baseline.port ||
-			boolKey(autoToken) !== boolKey(baseline.autoToken) ||
 			boolKey(accepting) !== boolKey(baseline.accepting) ||
 			hrsKey(restart) !== hrsKey(baseline.restart) ||
 			hrsKey(stop) !== hrsKey(baseline.stop)
@@ -58,7 +56,6 @@
 
 	function reset() {
 		port = baseline.port;
-		autoToken = baseline.autoToken;
 		accepting = baseline.accepting;
 		restart = baseline.restart;
 		stop = baseline.stop;
@@ -70,7 +67,6 @@
 		saving = true;
 		error = null;
 		const body: UpdateServerRequest = {
-			auto_token: autoToken,
 			accepting_connections: accepting,
 			restart_after_hrs: restart,
 			stop_after_hrs: stop
@@ -96,11 +92,6 @@
 			{:else}
 				<NumberField id="srv-port" bind:value={port} min={1} max={65535} invalid={portInvalid} />
 			{/if}
-		</div>
-
-		<div class="flex items-start justify-between gap-4 py-2">
-			<span class="pt-1 text-sm text-neutral-400">Auto token</span>
-			<BoolField bind:value={autoToken} allowInherit={isMember} label="Auto token" />
 		</div>
 
 		<div class="flex items-start justify-between gap-4 py-2">

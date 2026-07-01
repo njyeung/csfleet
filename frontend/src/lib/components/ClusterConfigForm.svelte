@@ -19,13 +19,12 @@
 	// Staged edits, seeded once (untrack: deliberate one-time read).
 	let port = $state<number | null>(untrack(() => cluster.port));
 	let policy = $state<LBPolicy>(untrack(() => (isPolicy(cluster.lb_policy) ? cluster.lb_policy : 'round_robin')));
-	let autoToken = $state(untrack(() => cluster.auto_token));
 	let accepting = $state(untrack(() => cluster.accepting_connections));
 	let restart = $state<number | null>(untrack(() => cluster.restart_after_hrs ?? null));
 	let stop = $state<number | null>(untrack(() => cluster.stop_after_hrs ?? null));
 
 	function snapshot() {
-		return { port, policy, autoToken, accepting, restart, stop };
+		return { port, policy, accepting, restart, stop };
 	}
 	let baseline = $state(untrack(snapshot));
 
@@ -42,7 +41,6 @@
 	const dirty = $derived(
 		portChanged ||
 			policy !== baseline.policy ||
-			autoToken !== baseline.autoToken ||
 			accepting !== baseline.accepting ||
 			hrsKey(restart) !== hrsKey(baseline.restart) ||
 			hrsKey(stop) !== hrsKey(baseline.stop)
@@ -52,7 +50,6 @@
 	function reset() {
 		port = baseline.port;
 		policy = baseline.policy;
-		autoToken = baseline.autoToken;
 		accepting = baseline.accepting;
 		restart = baseline.restart;
 		stop = baseline.stop;
@@ -66,7 +63,6 @@
 		const body: UpdateClusterRequest = {
 			port,
 			lb_policy: policy,
-			auto_token: autoToken,
 			accepting_connections: accepting,
 			restart_after_hrs: restart,
 			stop_after_hrs: stop
@@ -107,11 +103,6 @@
 					<option value={p.value}>{p.label}</option>
 				{/each}
 			</select>
-		</div>
-
-		<div class="flex items-center justify-between gap-4 py-2">
-			<span class="text-sm text-neutral-400">Auto token</span>
-			<Switch bind:checked={autoToken} label="Auto token" />
 		</div>
 
 		<div class="flex items-center justify-between gap-4 py-2">

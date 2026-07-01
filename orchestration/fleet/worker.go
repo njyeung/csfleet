@@ -49,7 +49,6 @@ type worker struct {
 	ip         string
 	port       uint16 // external port currently registered with the proxy
 	standalone bool   // had its own port (vs cluster member) at last resolve
-	token      string // GSLT claimed from the pool
 	startedAt  time.Time
 	lastErr    string
 	crashCount int
@@ -90,7 +89,7 @@ func (w *worker) run() {
 // reconcile reads the DB and performs at most one transition toward desired state.
 func (w *worker) reconcile() {
 	// ResolveServer collapses the server row and its cluster into the effective
-	// spec: external port, auto_token, restart/stop and accepting all post-inheritance.
+	// spec: external port, restart/stop and accepting all post-inheritance.
 	eff, err := w.mgr.store.ResolveServer(w.name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -184,26 +183,13 @@ func (w *worker) bringUp(eff database.EffectiveServer) {
 		return
 	}
 
-	// An explicit SRCDS_TOKEN in the resolved env always wins; otherwise claim a
-	// free token from the pool when auto_token is set.
-	claimed := ""
-	if env["SRCDS_TOKEN"] == "" && eff.AutoToken {
-		if claimed = w.mgr.claimToken(); claimed != "" {
-			env["SRCDS_TOKEN"] = claimed
-		} else {
-			log.Printf("[fleet/%s] no GSLT free in pool, starting tokenless", row.Name)
-		}
-	}
-
 	pluginNames, err := w.mgr.store.EffectivePlugins(row.Name, cluster)
 	if err != nil {
-		w.mgr.releaseToken(claimed)
 		w.fail("load plugin list", err)
 		return
 	}
 	configNames, err := w.mgr.store.EffectiveConfigs(row.Name, cluster)
 	if err != nil {
-		w.mgr.releaseToken(claimed)
 		w.fail("load config list", err)
 		return
 	}
@@ -211,7 +197,6 @@ func (w *worker) bringUp(eff database.EffectiveServer) {
 	for _, name := range configNames {
 		cf, err := w.mgr.store.GetConfigFile(name)
 		if err != nil {
-			w.mgr.releaseToken(claimed)
 			w.fail(fmt.Sprintf("load config %q", name), err)
 			return
 		}
@@ -221,14 +206,12 @@ func (w *worker) bringUp(eff database.EffectiveServer) {
 	def := server.Definition{Name: row.Name, Network: "csfleet", IP: row.IP, Env: env}
 	inst, err := server.Start(w.ctx, w.mgr.cli, w.mgr.root, def, pluginNames, configs, w.mgr.store.LoadManifest)
 	if err != nil {
-		w.mgr.releaseToken(claimed)
 		w.fail("server start", err)
 		return
 	}
 
 	if err := w.mgr.proxy.AddBackend(extPort, row.IP); err != nil {
 		inst.Stop(context.Background(), w.mgr.cli)
-		w.mgr.releaseToken(claimed)
 		w.fail("add backend", err)
 		return
 	}
@@ -237,7 +220,6 @@ func (w *worker) bringUp(eff database.EffectiveServer) {
 	w.inst = inst
 	w.ip = row.IP
 	w.port = extPort
-	w.token = claimed
 	w.startedAt = time.Now()
 	w.phase = phaseRunning
 	w.lastErr = ""
@@ -265,12 +247,12 @@ func (w *worker) bringDown() {
 	w.mgr.signalChange()
 }
 
-// teardownLive removes the backend, flushes conntrack, stops the container, and
-// releases the GSLT. Shared by bringDown and handleCrash. Safe to call twice.
+// teardownLive removes the backend, flushes conntrack, and stops the container.
+// Shared by bringDown and handleCrash. Safe to call twice.
 func (w *worker) teardownLive(reason string) {
 	w.mu.Lock()
-	inst, port, ip, token := w.inst, w.port, w.ip, w.token
-	w.inst, w.token = nil, ""
+	inst, port, ip := w.inst, w.port, w.ip
+	w.inst = nil
 	w.mu.Unlock()
 
 	if inst == nil {
@@ -288,7 +270,6 @@ func (w *worker) teardownLive(reason string) {
 	if err := inst.Stop(context.Background(), w.mgr.cli); err != nil {
 		log.Printf("[fleet/%s] stop (%s): %v", w.name, reason, err)
 	}
-	w.mgr.releaseToken(token)
 }
 
 // handleCrash cleans up after an unexpected container exit and arms a backoff retry.

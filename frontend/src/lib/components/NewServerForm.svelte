@@ -8,7 +8,6 @@
 	import NumberField from './ui/NumberField.svelte';
 	import HoursField from './ui/HoursField.svelte';
 	import Switch from './ui/Switch.svelte';
-	import TokenField from './TokenField.svelte';
 	import AssignmentPicker from './AssignmentPicker.svelte';
 	import EnvEditor from './EnvEditor.svelte';
 
@@ -26,8 +25,6 @@
 	);
 	let port = $state<number | null>(null);
 	let cluster = $state(untrack(() => lockedCluster ?? ''));
-	let token = $state('');
-	let autoToken = $state(false); // New Server defaults auto_token off
 	let accepting = $state(true);
 	let restart = $state<number | null>(-1); // -1 = no limit (default)
 	let stop = $state<number | null>(-1);
@@ -123,7 +120,6 @@
 		const body: CreateServerRequest = { name: trimmedName };
 		if (placement === 'standalone') body.port = port;
 		else body.cluster = cluster;
-		body.auto_token = autoToken;
 		body.accepting_connections = accepting;
 		body.restart_after_hrs = restart;
 		body.stop_after_hrs = stop;
@@ -131,10 +127,7 @@
 		// Tri-state: omit = inherit; an explicit (possibly empty) set is sent as-is.
 		if (pluginSel !== null) body.plugins = pluginSel;
 		if (configSel !== null) body.configs = configSel;
-		// The pinned GSLT rides along as a per-server env var.
-		const envOut = { ...envOverlay };
-		if (token.trim()) envOut['SRCDS_TOKEN'] = token.trim();
-		if (Object.keys(envOut).length) body.env = envOut;
+		if (Object.keys(envOverlay).length) body.env = envOverlay;
 
 		const res = await servers.create(body);
 		saving = false;
@@ -213,9 +206,6 @@
 			{/if}
 		</div>
 	</div>
-
-	<!-- GSLT token -->
-	<TokenField bind:token bind:autoToken />
 
 	<!-- Toggles -->
 	<div class="flex items-center justify-between gap-4">

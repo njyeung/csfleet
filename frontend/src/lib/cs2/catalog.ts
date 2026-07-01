@@ -27,6 +27,7 @@ export const CS2_CATALOG: CatalogGroup[] = [
 			{ key: 'CS2_CHEATS', default: '0', description: 'Enable sv_cheats (0 = off).' },
 			{ key: 'CS2_SERVER_HIBERNATE', default: '0', description: 'Hibernate when empty (0 = off).' },
 			{ key: 'CS2_LAN', default: '0', description: 'LAN mode (0 = off).' },
+			{ key: 'SRCDS_TOKEN', default: '', description: 'Game Server Login Token for server identity.' },
 			{ key: 'CS2_RCONPW', default: 'changeme', description: 'RCON password.' },
 			{ key: 'CS2_PW', default: '', description: 'Server join password (blank = public).' },
 			{ key: 'CS2_MAXPLAYERS', default: '10', description: 'Maximum player slots.' },
@@ -84,9 +85,8 @@ export const CS2_CATALOG: CatalogGroup[] = [
 	}
 ];
 
-// Reserved vars — set by the orchestrator at container start, so a
-// user value is ignored/harmful. The editor silently drops these (no-op). The
-// GSLT token (SRCDS_TOKEN) is handled by the dedicated TokenField, not here.
-export const RESERVED_VARS = new Set(['CS2_PORT', 'CS2_RCON_PORT', 'TV_PORT', 'CS2_IP', 'SRCDS_TOKEN']);
+// Reserved vars — set by the orchestrator at container start, so a user value is
+// ignored/harmful. The editor silently drops these (no-op).
+export const RESERVED_VARS = new Set(['CS2_PORT', 'CS2_RCON_PORT', 'TV_PORT', 'CS2_IP']);
 
 export const isReserved = (key: string) => RESERVED_VARS.has(key.trim());

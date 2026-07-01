@@ -6,6 +6,5 @@ export { clusters } from './clusters';
 export { plugins } from './plugins';
 export { configs } from './configs';
 export { env } from './env';
-export { gslt } from './gslt';
 export { globals } from './globals';
 export { auth } from './auth';

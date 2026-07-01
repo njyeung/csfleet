@@ -201,11 +201,6 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/configs/{name...}", s.putConfigFile)
 	mux.HandleFunc("DELETE /api/configs/{name...}", s.deleteConfigFile)
 
-	// GSLT token pool
-	mux.HandleFunc("GET /api/gslt-tokens", s.listTokens)
-	mux.HandleFunc("POST /api/gslt-tokens", s.addToken)
-	mux.HandleFunc("DELETE /api/gslt-tokens", s.deleteToken)
-
 	// Env variables: GET reads any scope; PUT/DELETE edit global only
 	// (cluster/server env is set at creation).
 	mux.HandleFunc("GET /api/env", s.listEnv)

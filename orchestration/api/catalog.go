@@ -146,49 +146,6 @@ func (s *Server) setGlobalConfigs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- GSLT token pool ---
-
-func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
-	tokens, err := s.store.ListGSLTTokens()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, tokens)
-}
-
-func (s *Server) addToken(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Token string `json:"token"`
-	}
-	if err := readJSON(w, r, &body); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
-		return
-	}
-	if body.Token == "" {
-		writeErr(w, http.StatusBadRequest, "token is required")
-		return
-	}
-	if err := s.store.AddGSLTToken(body.Token); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusCreated)
-}
-
-func (s *Server) deleteToken(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		writeErr(w, http.StatusBadRequest, "token query param is required")
-		return
-	}
-	if err := s.store.DeleteGSLTToken(token); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // --- Env variables ---
 //
 // GET reads any scope (global|cluster|server) for inspection. Writes (PUT/DELETE)

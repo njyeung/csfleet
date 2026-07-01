@@ -22,7 +22,6 @@
 	let name = $state('');
 	let port = $state<number | null>(null);
 	let policy = $state<LBPolicy>('round_robin');
-	let autoToken = $state(true); // New Cluster defaults auto_token on
 	let accepting = $state(true);
 	let restart = $state<number | null>(-1);
 	let stop = $state<number | null>(-1);
@@ -63,7 +62,6 @@
 			name: trimmedName,
 			port,
 			lb_policy: policy,
-			auto_token: autoToken,
 			accepting_connections: accepting,
 			restart_after_hrs: restart,
 			stop_after_hrs: stop,
@@ -123,10 +121,6 @@
 		</select>
 	</div>
 
-	<div class="flex items-center justify-between gap-4">
-		<span class="text-sm text-neutral-400">Auto token</span>
-		<Switch bind:checked={autoToken} label="Auto token" />
-	</div>
 	<div class="flex items-center justify-between gap-4">
 		<span class="text-sm text-neutral-400">Accepting connections</span>
 		<Switch bind:checked={accepting} label="Accepting connections" />

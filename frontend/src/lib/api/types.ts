@@ -42,7 +42,6 @@ export interface Server {
 	ip: string;
 	port: number | null;
 	cluster: string | null;
-	auto_token: boolean | null;
 	accepting_connections: boolean | null;
 	restart_after_hrs: number | null;
 	stop_after_hrs: number | null;
@@ -66,7 +65,6 @@ export interface CreateServerRequest {
 	// Exactly one of port (standalone) or cluster (member) must be set.
 	port?: number | null;
 	cluster?: string | null;
-	auto_token?: boolean | null;
 	accepting_connections?: boolean | null;
 	restart_after_hrs?: number | null;
 	stop_after_hrs?: number | null;
@@ -80,7 +78,6 @@ export interface CreateServerRequest {
 // create-only and absent here. A standalone server's port may be retargeted.
 export interface UpdateServerRequest {
 	port?: number | null;
-	auto_token?: boolean | null;
 	accepting_connections?: boolean | null;
 	restart_after_hrs?: number | null;
 	stop_after_hrs?: number | null;
@@ -94,7 +91,6 @@ export type LBPolicy = 'round_robin' | 'packing' | 'sparse';
 export interface Cluster {
 	name: string;
 	port: number;
-	auto_token: boolean;
 	accepting_connections: boolean;
 	restart_after_hrs: number | null;
 	stop_after_hrs: number | null;
@@ -105,7 +101,6 @@ export interface Cluster {
 export interface CreateClusterRequest {
 	name: string;
 	port: number;
-	auto_token?: boolean | null;
 	accepting_connections?: boolean | null;
 	restart_after_hrs?: number | null;
 	stop_after_hrs?: number | null;
@@ -119,7 +114,6 @@ export interface CreateClusterRequest {
 // are create-only and absent.
 export interface UpdateClusterRequest {
 	port: number;
-	auto_token?: boolean | null;
 	accepting_connections?: boolean | null;
 	restart_after_hrs?: number | null;
 	stop_after_hrs?: number | null;

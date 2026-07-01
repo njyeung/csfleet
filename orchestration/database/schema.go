@@ -213,19 +213,13 @@ func (s *Store) migrate() error {
 			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS csfleet_gslt_tokens (
-			token      VARCHAR(255) NOT NULL PRIMARY KEY,
-			updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-		);
-
 		-- A cluster is the shared spec its members inherit. port is structural (the
-		-- single external ingress every member sits behind); auto_token,
-		-- accepting_connections and restart/stop are the inheritable override-tier
+		-- single external ingress every member sits behind); accepting_connections
+		-- and restart/stop are the inheritable override-tier
 		-- defaults; lb_policy is how the proxy spreads new sessions across members.
 		CREATE TABLE IF NOT EXISTS csfleet_clusters (
 			name                  VARCHAR(255) NOT NULL PRIMARY KEY,
 			port                  INT          NOT NULL UNIQUE,
-			auto_token            BOOLEAN      NOT NULL DEFAULT TRUE,
 			accepting_connections BOOLEAN      NOT NULL DEFAULT TRUE,
 			restart_after_hrs     FLOAT        DEFAULT NULL,
 			stop_after_hrs        FLOAT        DEFAULT NULL,
@@ -236,9 +230,9 @@ func (s *Store) migrate() error {
 		-- ip: static bridge address, the proxy's DNAT target
 		-- port: external host port clients reach this server on when standalone
 		--
-		-- A member inherits its cluster on the override tier: auto_token,
-		-- accepting_connections (drain), restart_after_hrs, stop_after_hrs. NULL on
-		-- the server means "inherit the cluster's value"; a non-NULL overrides it.
+		-- A member inherits its cluster on the override tier: accepting_connections
+		-- (drain), restart_after_hrs, stop_after_hrs. NULL on the server means
+		-- "inherit the cluster's value"; a non-NULL overrides it.
 		-- For the hour fields a value < 0 means "no limit" (distinct from NULL), so a
 		-- server can opt out of a cluster cadence. The hour fields default to -1 (no
 		-- limit) so a fresh server never silently inherits a restart/stop.
@@ -247,7 +241,6 @@ func (s *Store) migrate() error {
 			ip                    VARCHAR(45)  NOT NULL UNIQUE,
 			port                  INT          UNIQUE,
 			cluster               VARCHAR(255) DEFAULT NULL,
-			auto_token            BOOLEAN      DEFAULT NULL,
 			accepting_connections BOOLEAN      DEFAULT NULL,
 			restart_after_hrs     FLOAT        DEFAULT -1,
 			stop_after_hrs        FLOAT        DEFAULT -1,

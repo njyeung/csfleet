@@ -36,7 +36,6 @@ func (s *Store) ResolveServer(name string) (EffectiveServer, error) {
 	}
 
 	// Override tier: server value wins, else cluster's, else the built-in default.
-	eff.AutoToken = resolveBool(row.AutoToken, clustered, cl.AutoToken, true)
 	eff.Accepting = resolveBool(row.AcceptingConns, clustered, cl.AcceptingConns, true)
 	eff.RestartHrs = resolveHrs(row.RestartAfterHrs, cl.RestartAfterHrs)
 	eff.StopHrs = resolveHrs(row.StopAfterHrs, cl.StopAfterHrs)

@@ -3,8 +3,8 @@
 End-to-end smoke test for the orchestrator control-plane API.
 
 Scenario (mirrors the scripted steps):
-  1. Create a standalone server on a port (auto_token off, accepting, no
-     restart/stop cadence). Watch it come up over SSE.
+  1. Create a standalone server on a port (accepting, no restart/stop cadence).
+     Watch it come up over SSE.
   2. List servers.
   3. Upload skininspect.cfg + the WeaponPaints plugin and its dependencies, then
      create a cluster that assigns them.
@@ -253,7 +253,7 @@ def show_clusters():
     print("    clusters:")
     for c in clusters or []:
         print(f"      - {c['name']:<10} port {c['port']:<8} "
-              f"lb={c['lb_policy']:<12} auto_token={c['auto_token']}")
+              f"lb={c['lb_policy']:<12}")
     return {c["name"]: c for c in clusters or []}
 
 
@@ -316,7 +316,6 @@ def main():
     status, created = api("POST", "/api/servers", {
         "name": STANDALONE,
         "port": STANDALONE_PORT,
-        "auto_token": False,
         "accepting_connections": True,
         "restart_after_hrs": -1,
         "stop_after_hrs": -1,
@@ -324,8 +323,6 @@ def main():
     check(status == 201, "standalone create returns 201")
     check(isinstance(created, dict) and created.get("ip", "").startswith("172.30.0."),
           f"ip was auto-allocated (got {created.get('ip') if isinstance(created, dict) else created})")
-    check(isinstance(created, dict) and created.get("auto_token") is False,
-          "auto_token stored as false")
 
     wait(10, "standalone to start — watch SSE")
 
@@ -346,7 +343,6 @@ def main():
     status, _ = api("POST", "/api/clusters", {
         "name": CLUSTER,
         "port": CLUSTER_PORT,
-        "auto_token": False,
         "lb_policy": "round_robin",
         "plugins": CLUSTER_PLUGINS,
         "configs": [CLUSTER_CONFIG],
