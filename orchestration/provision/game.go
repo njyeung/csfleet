@@ -23,6 +23,9 @@ const (
 	// unprivileged "steam" user). The SteamCMD and server-instance containers
 	// both run as this user, so base/ must be writable by it.
 	steamUID = 1000
+	// maxSteamAttempts bounds the retry loop for resumable SteamCMD updates that
+	// report an incomplete (0x6) state after an interrupted download.
+	maxSteamAttempts = 4
 )
 
 // ensureBaseOwnership makes base/ writable by the in-container steam user.
@@ -67,17 +70,22 @@ func ensureGame(ctx context.Context, cli *client.Client, p paths, rec receipt) (
 
 	logf("updating CS2 (appid %s) at %s via SteamCMD", steamAppID, p.base)
 
-	if err := steamUpdate(ctx, cli, p); err != nil {
-		return rec.Game, err
-	}
-	id, ok := currentBuildID(p)
-	if !ok {
-		return rec.Game, fmt.Errorf("game still reports incomplete after update")
+	// SteamCMD frequently reports state 0x6 (update-required|fully-installed)
+	// when a large download is interrupted mid-job — common on remote hosts with
+	// throttled/latent CDN transfers. The update is resumable, so retry until the
+	// manifest reports fully-installed rather than failing after a single pass.
+	for attempt := 1; attempt <= maxSteamAttempts; attempt++ {
+		if err := steamUpdate(ctx, cli, p); err != nil {
+			return rec.Game, err
+		}
+		if id, ok := currentBuildID(p); ok {
+			logf("game at buildid %s", id)
+			return gameReceipt{BuildID: id}, nil
+		}
+		logf("game still incomplete after SteamCMD attempt %d/%d — retrying", attempt, maxSteamAttempts)
 	}
 
-	logf("game at buildid %s", id)
-
-	return gameReceipt{BuildID: id}, nil
+	return rec.Game, fmt.Errorf("game still reports incomplete after %d update attempts", maxSteamAttempts)
 }
 
 func latestBuildID() (string, error) {
@@ -115,7 +123,7 @@ bash "${STEAMCMDDIR}/steamcmd.sh" \
   +force_install_dir "${STEAMAPPDIR}" \
   +@bClientTryRequestManifestWithoutCode 1 \
   +login anonymous \
-  +app_update ` + steamAppID + ` \
+  +app_update ` + steamAppID + ` validate \
   +quit
 `
 	if err := runEphemeral(ctx, cli, &container.Config{
