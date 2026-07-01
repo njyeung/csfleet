@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -64,12 +63,11 @@ type Config struct {
 	AdminPass string // ADMIN_PASS
 	JWTSecret string // JWT_SECRET: HS256 signing key
 
-	TLSDomains  []string // TLS_DOMAINS: hostnames autocert issues certs for; empty disables TLS
-	TLSCacheDir string   // TLS_CACHE_DIR: where autocert caches certs
-	TLSEmail    string   // TLS_EMAIL: optional ACME account contact
+	TLSDomains []string // TLS_DOMAINS: hostnames autocert issues certs for; empty disables TLS
+	TLSEmail   string   // TLS_EMAIL: optional ACME account contact
 }
 
-func configFromEnv(root string) Config {
+func configFromEnv() Config {
 	port, _ := strconv.Atoi(envOr("DB_PORT", "3306"))
 
 	// TLS is on when TLS_DOMAINS is set,
@@ -81,20 +79,19 @@ func configFromEnv(root string) Config {
 	}
 
 	cfg := Config{
-		DBHost:      envOr("DB_HOST", "172.30.0.2"),
-		DBPort:      port,
-		DBName:      envOr("DB_NAME", "csfleet"),
-		DBUser:      envOr("DB_USER", "csfleet"),
-		DBPass:      envOr("DB_PASS", "csfleet"),
-		DBRootPass:  envOr("DB_ROOT_PASS", "csfleet"),
-		APIAddr:     envOr("API_ADDR", apiDefault),
-		HTTPAddr:    ":80",
-		AdminUser:   strings.ToLower(envOr("ADMIN_USER", "admin")),
-		AdminPass:   os.Getenv("ADMIN_PASS"),
-		JWTSecret:   os.Getenv("JWT_SECRET"),
-		TLSDomains:  tlsDomains,
-		TLSCacheDir: envOr("TLS_CACHE_DIR", filepath.Join(root, "cache", "autocert")),
-		TLSEmail:    os.Getenv("TLS_EMAIL"),
+		DBHost:     envOr("DB_HOST", "172.30.0.2"),
+		DBPort:     port,
+		DBName:     envOr("DB_NAME", "csfleet"),
+		DBUser:     envOr("DB_USER", "csfleet"),
+		DBPass:     envOr("DB_PASS", "csfleet"),
+		DBRootPass: envOr("DB_ROOT_PASS", "csfleet"),
+		APIAddr:    envOr("API_ADDR", apiDefault),
+		HTTPAddr:   ":80",
+		AdminUser:  strings.ToLower(envOr("ADMIN_USER", "admin")),
+		AdminPass:  os.Getenv("ADMIN_PASS"),
+		JWTSecret:  os.Getenv("JWT_SECRET"),
+		TLSDomains: tlsDomains,
+		TLSEmail:   os.Getenv("TLS_EMAIL"),
 	}
 
 	if cfg.AdminPass == "" {

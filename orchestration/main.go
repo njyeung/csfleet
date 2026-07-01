@@ -17,8 +17,8 @@ import (
 
 	"csfleet/orchestrator/api"
 	"csfleet/orchestrator/database"
-	"csfleet/orchestrator/internal/install"
 	"csfleet/orchestrator/fleet"
+	"csfleet/orchestrator/internal/install"
 	"csfleet/orchestrator/provision"
 	"csfleet/orchestrator/proxy"
 )
@@ -123,7 +123,7 @@ func main() {
 	root := repoRoot()
 	loadDotenv(filepath.Join(root, ".env"))
 	install.ConfigureCache(root)
-	cfg := configFromEnv(root)
+	cfg := configFromEnv()
 	ctx := context.Background()
 
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -202,7 +202,6 @@ func main() {
 		AdminPassHash: adminHash,
 		JWTSecret:     cfg.JWTSecret,
 		TLSDomains:    cfg.TLSDomains,
-		TLSCacheDir:   cfg.TLSCacheDir,
 		TLSEmail:      cfg.TLSEmail,
 		HTTPAddr:      cfg.HTTPAddr,
 	}, store, mgr)

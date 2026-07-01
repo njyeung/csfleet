@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,10 +33,9 @@ type Config struct {
 	JWTSecret     string // seeded from .env
 
 	// TLS via autocert (Let's Encrypt). TLS is enabled iff TLSDomains is non-empty.
-	TLSDomains  []string // hostnames certs are issued for (ACME HostWhitelist)
-	TLSCacheDir string   // directory autocert caches certs/keys in
-	TLSEmail    string   // optional ACME account contact email
-	HTTPAddr    string   // plain-HTTP listener for the ACME HTTP-01 challenge + HTTPS redirect
+	TLSDomains []string // hostnames certs are issued for (ACME HostWhitelist)
+	TLSEmail   string   // optional ACME account contact email
+	HTTPAddr   string   // plain-HTTP listener for the ACME HTTP-01 challenge + HTTPS redirect
 }
 
 // Server is the HTTP control plane. It holds the Store it writes intent to and
@@ -66,7 +66,7 @@ func New(cfg Config, store *database.Store, mgr *fleet.Manager) *Server {
 		s.acme = &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			HostPolicy: autocert.HostWhitelist(cfg.TLSDomains...),
-			Cache:      autocert.DirCache(cfg.TLSCacheDir),
+			Cache:      autocert.DirCache(filepath.Join("cache", "autocert")),
 			Email:      cfg.TLSEmail,
 		}
 		s.http = &http.Server{Addr: cfg.Addr, Handler: handler, TLSConfig: s.acme.TLSConfig()}
