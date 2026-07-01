@@ -31,9 +31,13 @@ Runtime state stays on the server next to the binary: `.env`, `base/`, `instance
 # Download tar and unzip
 curl -L https://github.com/njyeung/csfleet/releases/latest/download/csfleet-linux-amd64.tar.gz -o ./csfleet.tar.gz
 sudo tar -xzf ./csfleet.tar.gz
+
+cd csfleet
+
 # Move .env.example to .env and edit credentials
 mv .env.example .env
 vim .env
+
 # Start csfleet
 ./csfleet
 ```
