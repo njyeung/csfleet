@@ -6,15 +6,10 @@ ignore = ["**/runtimes/win/**", "__MACOSX/**"]
 type = "github_release"
 repo = "Nereziel/cs2-WeaponPaints"
 asset = '^WeaponPaints\.zip$'
-# version = "build-423" # pin a tag, but it defaults to the latest
+# version = "build-466" # pin a tag, but it defaults to the latest
 
-[[layout]]
-from = "WeaponPaints" # the plugin folder itself
-to = "addons/counterstrikesharp/plugins/WeaponPaints"
-
-[[layout]]
-from = "gamedata"
-to = "addons/counterstrikesharp/gamedata"
+# No [[layout]]: since build-466 the archive is game-relative (addons/... at
+# the root), so the default straight-into-csgo/ extraction is correct.
 
 [[template]]
 path = "addons/counterstrikesharp/configs/plugins/WeaponPaints/WeaponPaints.json"
