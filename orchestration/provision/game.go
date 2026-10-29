@@ -2,6 +2,7 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -113,18 +114,34 @@ func latestBuildID() (string, error) {
 // seccomp:unconfined: Docker's default seccomp profile blocks an i386 syscall
 // the 32-bit Steam client needs, which otherwise makes SteamCMD falsely report
 // "needs to be online to update" (same fix as docker-compose.yml).
+//
+// SteamCMD exits 8 when the app isn't fully installed after the job (state
+// 0x6). That's resumable, so the script maps it to success and leaves the
+// verdict to ensureGame's currentBuildID check and retry loop.
 func steamUpdate(ctx context.Context, cli *client.Client, p paths) error {
 	if err := os.MkdirAll(p.base, 0o755); err != nil {
 		return err
 	}
+	// Anonymous logins are denied the manifest request codes for superseded
+	// depot manifests, which SteamCMD needs to diff an existing install against
+	// the new build: every delta update fails "Access Denied" and leaves the app
+	// in state 0x6 without downloading anything. Dropping the appmanifest makes
+	// SteamCMD treat base/ as a fresh install into a populated dir — it verifies
+	// the files on disk against the current manifests and fetches only what
+	// differs. We pass `validate` anyway, so the forced full verify is free.
+	if err := os.Remove(p.appManifest); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("drop appmanifest: %w", err)
+	}
 	script := `
-set -e
 bash "${STEAMCMDDIR}/steamcmd.sh" \
   +force_install_dir "${STEAMAPPDIR}" \
   +@bClientTryRequestManifestWithoutCode 1 \
   +login anonymous \
   +app_update ` + steamAppID + ` validate \
   +quit
+rc=$?
+[ "$rc" -eq 8 ] && exit 0
+exit "$rc"
 `
 	if err := runEphemeral(ctx, cli, &container.Config{
 		Image:      cs2Image,
