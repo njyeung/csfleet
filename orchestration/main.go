@@ -165,6 +165,7 @@ func main() {
 		Pass:      cfg.DBPass,
 		RootPass:  cfg.DBRootPass,
 		Port:      cfg.DBPort,
+		DataDir:   filepath.Join(root, "mariadb-data"),
 	})
 	if err != nil {
 		log.Fatalf("[orchestrator] database: %v", err)

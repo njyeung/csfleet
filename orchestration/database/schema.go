@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -28,8 +30,11 @@ type Config struct {
 	User      string
 	Pass      string
 	RootPass  string
-	Port      int // MariaDB port, default 3306
+	Port      int    // MariaDB port, default 3306
+	DataDir   string // host dir bind-mounted at /var/lib/mysql so data outlives the container
 }
+
+const mariaDataDir = "/var/lib/mysql"
 
 type Store struct {
 	DB   *sql.DB
@@ -43,8 +48,14 @@ func Start(ctx context.Context, cli *client.Client, cfg Config) (*Store, error) 
 		cfg.Port = 3306
 	}
 
+	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+		return nil, fmt.Errorf("data dir %s: %w", cfg.DataDir, err)
+	}
+
+	// A running container is only reused if it's backed by our data dir; one
+	// without it (e.g. left by an older build after a crash) is recreated.
 	info, err := cli.ContainerInspect(ctx, cfg.Container)
-	if err == nil && info.State.Running {
+	if err == nil && info.State.Running && hasDataMount(info, cfg.DataDir) {
 		log.Printf("[database] %s already running", cfg.Container)
 	} else {
 		cli.ContainerRemove(ctx, cfg.Container, container.RemoveOptions{Force: true})
@@ -62,9 +73,13 @@ func Start(ctx context.Context, cli *client.Client, cfg Config) (*Store, error) 
 				"MARIADB_USER=" + cfg.User,
 				"MARIADB_PASSWORD=" + cfg.Pass,
 				"MARIADB_ROOT_PASSWORD=" + cfg.RootPass,
+				// The data dir outlives image bumps (mariadb:11 floats across
+				// minors); let the entrypoint run mariadb-upgrade when it changes.
+				"MARIADB_AUTO_UPGRADE=1",
 			},
 		}, &container.HostConfig{
 			NetworkMode: container.NetworkMode(cfg.Network),
+			Binds:       []string{cfg.DataDir + ":" + mariaDataDir},
 		}, &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				cfg.Network: {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: cfg.IP}},
@@ -113,6 +128,17 @@ func (s *Store) Close(ctx context.Context) {
 		s.cli.ContainerStop(ctx, s.cfg.Container, container.StopOptions{})
 		s.cli.ContainerRemove(ctx, s.cfg.Container, container.RemoveOptions{})
 	})
+}
+
+// hasDataMount reports whether the container has dataDir mounted as its
+// MariaDB data directory.
+func hasDataMount(info container.InspectResponse, dataDir string) bool {
+	for _, m := range info.Mounts {
+		if m.Destination == mariaDataDir && filepath.Clean(m.Source) == filepath.Clean(dataDir) {
+			return true
+		}
+	}
+	return false
 }
 
 func pullImage(ctx context.Context, cli *client.Client, ref string) error {
@@ -339,6 +365,8 @@ func (s *Store) ensurePortTriggers() error {
 	return nil
 }
 
+// seedDefaults writes the DB_* settings into the global env tier on every boot,
+// overwriting earlier values so .env stays the source of truth for them.
 func (s *Store) seedDefaults() error {
 	defaults := []struct{ key, value string }{
 		{"db.host", s.cfg.Container},
@@ -350,7 +378,7 @@ func (s *Store) seedDefaults() error {
 	}
 	for _, d := range defaults {
 		_, err := s.DB.Exec(
-			"INSERT IGNORE INTO csfleet_env_variables (`key`, value) VALUES (?, ?)",
+			"INSERT INTO csfleet_env_variables (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)",
 			d.key, d.value,
 		)
 		if err != nil {

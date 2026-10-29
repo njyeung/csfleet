@@ -1,8 +1,8 @@
 # Local secrets
 .env
 
-# Nothing here is a bind mount, but ignore stray volume dumps if you create any.
 cs2-data/
+# MariaDB data dir, bind-mounted into the database container.
 mariadb-data/
 *.log
 instances/

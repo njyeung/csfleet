@@ -25,7 +25,7 @@ The deployable runtime package contains only:
 - `frontend/build`
 - `.env.example`
 
-Runtime state stays on the server next to the binary: `.env`, `base/`, `instances/`, and `cache/` are not included in the package.
+Runtime state stays on the server next to the binary: `.env`, `base/`, `instances/`, `cache/`, and `mariadb-data/` (the persistent database) are not included in the package.
 
 ```sh
 # Download tar and unzip
